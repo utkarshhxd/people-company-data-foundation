@@ -1,0 +1,18 @@
+.env
+# Local ingestion drop dir: real data stays out of git, sample files are kept.
+data/inbox/*
+!data/inbox/messy_people.csv
+!data/inbox/collision_people.csv
+!data/inbox/invalid_company.csv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

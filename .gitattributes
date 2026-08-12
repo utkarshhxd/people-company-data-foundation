@@ -1,0 +1,5 @@
+# Everything here is copied into Linux containers, so LF is the correct
+# line ending in the repository regardless of the checkout platform.
+* text=auto eol=lf
+*.png binary
+*.xlsx binary

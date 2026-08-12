@@ -91,7 +91,18 @@ def insert_observations(conn: psycopg.Connection, rows: list[tuple]) -> int:
                 is_null_token, observed_at
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (record_id, source_column, value_index) DO NOTHING
+            -- raw_value and observed_at are deliberately NOT updated: they are
+            -- what the source said, and that never changes. Everything else here
+            -- is derived, and must be refreshable — otherwise approving a
+            -- mapping would never reach batches that were already normalized,
+            -- and human review would be pointless for anything but new files.
+            ON CONFLICT (record_id, source_column, value_index) DO UPDATE SET
+                canonical_field      = EXCLUDED.canonical_field,
+                mapping_status       = EXCLUDED.mapping_status,
+                normalized_value     = EXCLUDED.normalized_value,
+                value_type           = EXCLUDED.value_type,
+                normalization_method = EXCLUDED.normalization_method,
+                is_null_token        = EXCLUDED.is_null_token
             """,
             rows,
         )

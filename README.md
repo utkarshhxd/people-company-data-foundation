@@ -18,9 +18,12 @@ This repository is being built incrementally.
 - **Increment 4** — normalization + lossless attribute capture: every column of
   every row becomes an observation, raw and normalized side by side.
   (`docs/decisions/0004-increment-4-normalization.md`)
-- **Increment 5** (this state) — validation: judge whether each observed value
-  is usable as the field it was mapped to, and whether the record could ever be
-  resolved to an entity. (`docs/decisions/0005-increment-5-validation.md`)
+- **Increment 5** — validation: judge whether each observed value is usable as
+  the field it was mapped to, and whether the record could ever be resolved to
+  an entity. (`docs/decisions/0005-increment-5-validation.md`)
+- **Increment 6** (this state) — quarantine: hold invalid records back from
+  entity resolution without losing them, with a human review path in and out.
+  (`docs/decisions/0006-increment-6-quarantine.md`)
 
 ## Repository layout
 
@@ -230,6 +233,49 @@ docker compose exec postgres psql -U pcdf_dev -d pcdf `
 fails exactly one rule path (bad email, no identifier, impossible headcount,
 future founding year, an all-`NULL` row, a 3-digit phone, a `50-100` range).
 
+## Quarantine
+
+A record validated as `invalid` is routed to quarantine **in the same
+transaction** as the verdict, so there is never a moment when a record is
+known-bad but still visible downstream. Only `error`-severity failures
+quarantine anything; warnings never do.
+
+The control is the `resolvable_record` view — **entity resolution reads that,
+not `raw_record`**. Quarantined records stay fully intact in `raw_record` and
+`attribute_observation`; they are simply absent from the view.
+
+```powershell
+docker compose run --rm validation quarantine list --status open
+docker compose run --rm validation quarantine show --record-id <id>
+
+# Use it anyway / confirm it is unusable. Both are recorded permanently.
+docker compose run --rm validation quarantine release --record-id <id> `
+  --reviewed-by you --note "vendor confirmed by phone"
+docker compose run --rm validation quarantine reject --record-id <id> `
+  --reviewed-by you --note "row is entirely NULL placeholders"
+
+docker compose run --rm validation quarantine stats
+```
+
+Four dispositions, and the lifecycle rules are the interesting part:
+
+- `open` → awaiting a human.
+- `released` → usable despite the failures. It survives the *same* failure
+  recurring (re-running validation must not undo a person), but a **new** failure
+  reopens it — they signed off on one problem, not on any future one.
+- `rejected` → confirmed unusable. Terminal, and it outranks a later clean
+  validation: a ruleset change must not quietly overturn a human judgement.
+- `resolved` → re-validation passed, closed automatically with no human. This is
+  what makes fixing a mapping cheap instead of generating review work.
+
+Every transition is appended to `quarantine_event` with actor and reason, so a
+release followed by a re-quarantine never erases who signed off.
+
+`data/inbox/ambiguous_company.csv` demonstrates the full loop: a file with both
+`name` and `org_name` collides on `company_name`, neither mapping confirms, so
+the records have no identifier and are quarantined — approve one mapping,
+re-normalize, re-validate, and they close themselves as `resolved`.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -245,7 +291,8 @@ docker compose run --rm validation python -m pytest tests -v
 
 ## Future increments
 
-Quarantine, entity resolution, golden records, and history/provenance land as
-new `services/*` and `libs/common/` modules — this layout accommodates them
-without restructuring. Quarantine is next: `invalid` is recorded today but
-nothing yet acts on it.
+Entity resolution, golden records, and history/provenance land as new
+`services/*` and `libs/common/` modules — this layout accommodates them without
+restructuring. Entity resolution is next, and it must read `resolvable_record`
+rather than `raw_record`; it is also the step that finally assigns the stable
+`person_id` / `company_id` that everything so far has been building toward.

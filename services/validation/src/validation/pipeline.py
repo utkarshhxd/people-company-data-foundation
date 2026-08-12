@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from common.db import connect
 
 from validation import repository
+from validation.quarantine import route
 from validation.record_rules import judge_record
 from validation.rules import (
     FAIL,
@@ -57,14 +58,25 @@ def _status_for(error_failures: int, warning_failures: int) -> str:
     return STATUS_VALID
 
 
+@dataclass
+class RecordVerdict:
+    status: str
+    result_rows: list[tuple]
+    record_row: tuple
+    # Only the error-severity failures. Warnings never quarantine a record, so
+    # keeping the two apart is what stops quarantine from swallowing a whole file.
+    error_rules: list[str]
+
+
 def validate_record(
     record_id, observations: list[dict], entity_type: str, batch_id: str, source_id: str
-) -> tuple[list[tuple], tuple]:
-    """One record -> its validation_result rows and its record_validation row."""
+) -> RecordVerdict:
+    """One record -> its validation_result rows, summary row, and error reasons."""
     result_rows: list[tuple] = []
     validated = unvalidated = 0
     errors = warnings = 0
     failed_rules: list[str] = []
+    error_rules: list[str] = []
 
     for obs in observations:
         # An unconfirmed mapping means we do not know what the value is supposed
@@ -92,6 +104,7 @@ def validate_record(
                 failed_rules.append(judgement.rule_id)
                 if judgement.severity == SEVERITY_ERROR:
                     errors += 1
+                    error_rules.append(judgement.rule_id)
                 elif judgement.severity == SEVERITY_WARNING:
                     warnings += 1
             result_rows.append((
@@ -106,6 +119,7 @@ def validate_record(
             failed_rules.append(judgement.rule_id)
             if judgement.severity == SEVERITY_ERROR:
                 errors += 1
+                error_rules.append(judgement.rule_id)
             elif judgement.severity == SEVERITY_WARNING:
                 warnings += 1
         result_rows.append((
@@ -114,12 +128,13 @@ def validate_record(
             repository.json_value(judgement.details), RULESET_VERSION,
         ))
 
+    status = _status_for(errors, warnings)
     record_row = (
         record_id, batch_id, source_id, entity_type,
-        _status_for(errors, warnings), errors, warnings, validated, unvalidated,
+        status, errors, warnings, validated, unvalidated,
         repository.json_value(sorted(set(failed_rules))), RULESET_VERSION,
     )
-    return result_rows, record_row
+    return RecordVerdict(status, result_rows, record_row, sorted(set(error_rules)))
 
 
 def validate_batch(batch_id: str) -> ValidateResult:
@@ -138,17 +153,24 @@ def validate_batch(batch_id: str) -> ValidateResult:
 
         entity_type = batch["entity_type"]
         source_id = str(batch["source_id"])
+        # Existing quarantine state, so routing is a decision against known
+        # state rather than a query per record.
+        existing = repository.quarantine_items_for_batch(conn, batch_id)
 
         pending_results: list[tuple] = []
         pending_records: list[tuple] = []
+        pending_transitions: list[tuple] = []
         records = judgements = 0
 
         def flush() -> int:
-            nonlocal pending_results, pending_records
+            nonlocal pending_results, pending_records, pending_transitions
             written = repository.insert_results(conn, pending_results)
             repository.upsert_record_validation(conn, pending_records)
+            # Same transaction as the verdict it derives from: there is never a
+            # moment when a record is known-invalid but not yet quarantined.
+            repository.apply_transitions(conn, pending_transitions)
             conn.commit()
-            pending_results, pending_records = [], []
+            pending_results, pending_records, pending_transitions = [], [], []
             return written
 
         # Separate connection for the stream, so the writes above cannot
@@ -156,17 +178,34 @@ def validate_batch(batch_id: str) -> ValidateResult:
         with connect() as read_conn:
             for record_id, observations in repository.iter_records(read_conn, batch_id):
                 records += 1
-                result_rows, record_row = validate_record(
+                verdict = validate_record(
                     record_id, observations, entity_type, batch_id, source_id
                 )
-                pending_results.extend(result_rows)
-                pending_records.append(record_row)
+                pending_results.extend(verdict.result_rows)
+                pending_records.append(verdict.record_row)
+
+                transition = route(
+                    verdict.status, verdict.error_rules, existing.get(record_id)
+                )
+                if transition is not None:
+                    pending_transitions.append((
+                        record_id, batch_id, source_id, entity_type,
+                        transition.to_status,
+                        repository.json_value(transition.reason_codes),
+                        len(transition.reason_codes),
+                        transition.action, transition.from_status,
+                        transition.to_status,
+                        repository.json_value(transition.reason_codes),
+                        transition.actor, transition.note,
+                    ))
+
                 if len(pending_records) >= RECORD_FLUSH_SIZE:
                     judgements += flush()
 
         judgements += flush()
 
         counts = repository.status_counts(conn, batch_id)
+        counts["quarantined"] = repository.quarantine_counts(conn, batch_id)["open"]
         failures = repository.failure_breakdown(conn, batch_id)
         logger.info(
             "batch %s validated: %d record(s), %d judgement(s) %s",

@@ -47,6 +47,7 @@ def _handle(payload: dict, producer: EventProducer) -> None:
             entity_type=payload.get("entity_type", ""),
             entities=result.entities,
             values_written=result.written,
+            values_refreshed=result.refreshed,
             values_unchanged=result.unchanged,
             values_retired=result.retired,
             counts=result.counts,

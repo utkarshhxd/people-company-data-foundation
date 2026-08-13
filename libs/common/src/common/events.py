@@ -131,6 +131,7 @@ def golden_updated(
     entity_type: str,
     entities: int,
     values_written: int,
+    values_refreshed: int,
     values_unchanged: int,
     values_retired: int,
     counts: dict[str, int],
@@ -143,6 +144,8 @@ def golden_updated(
         "entity_type": entity_type,
         "entities": entities,
         "values_written": values_written,
+        # Same value, stronger support: not a change, but not a no-op either.
+        "values_refreshed": values_refreshed,
         "values_unchanged": values_unchanged,
         "values_retired": values_retired,
         "counts": counts,

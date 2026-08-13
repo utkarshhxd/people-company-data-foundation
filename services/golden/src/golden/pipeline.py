@@ -25,16 +25,20 @@ class NothingToBuild(Exception):
 class BuildResult:
     entities: int
     written: int
+    refreshed: int
     unchanged: int
     retired: int
     counts: dict[str, int]
 
 
-def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int]:
-    """Recompute one entity's golden record. Returns (written, unchanged, retired)."""
+def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int, int]:
+    """Recompute one entity's golden record.
+
+    Returns (written, refreshed, unchanged, retired).
+    """
     observations = repository.observations_for_entity(conn, entity_id)
     current = repository.current_values(conn, entity_id)
-    written = unchanged = retired = 0
+    written = refreshed = unchanged = retired = 0
 
     for canonical_field, field_observations in observations.items():
         choice = choose(entity_type, canonical_field, field_observations)
@@ -43,10 +47,19 @@ def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int]
 
         existing = current.get(canonical_field)
         if existing is not None and existing["value"] == choice.value:
-            # Same answer as before. Leaving the row untouched keeps valid_from
-            # meaning "since when has this been true", which is the only reading
-            # that makes the history useful.
-            unchanged += 1
+            # Same answer as before, so valid_from must not move: it means
+            # "since when has this been true", which is the only reading that
+            # makes the history useful. But the support behind the value can
+            # still have changed — a new vendor agreeing raises confidence
+            # without making the value newly true — so the evidence is
+            # refreshed in place rather than left stale.
+            if (existing["supporting_sources"] != choice.supporting_sources
+                    or existing["competing_values"] != choice.competing_values
+                    or float(existing["confidence"]) != choice.confidence):
+                repository.refresh_evidence(conn, str(existing["golden_id"]), choice)
+                refreshed += 1
+            else:
+                unchanged += 1
             continue
 
         # Close the outgoing value first: only one row per (entity, field) may be
@@ -67,7 +80,7 @@ def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int]
             repository.retire_field(conn, str(existing["golden_id"]))
             retired += 1
 
-    return written, unchanged, retired
+    return written, refreshed, unchanged, retired
 
 
 def build_batch(batch_id: str) -> BuildResult:
@@ -94,12 +107,13 @@ def build_one(entity_id: str) -> BuildResult:
 
 
 def _build_all(conn, entities: list[dict]) -> BuildResult:
-    written = unchanged = retired = 0
+    written = refreshed = unchanged = retired = 0
     for entity in entities:
-        w, u, r = build_entity(
+        w, f, u, r = build_entity(
             conn, str(entity["entity_id"]), entity["entity_type"]
         )
         written += w
+        refreshed += f
         unchanged += u
         retired += r
         # Per entity: a failure part-way leaves earlier entities correctly built
@@ -108,8 +122,8 @@ def _build_all(conn, entities: list[dict]) -> BuildResult:
 
     counts = repository.golden_counts(conn)
     logger.info(
-        "golden record built for %d entity(ies): %d written, %d unchanged, "
-        "%d retired %s",
-        len(entities), written, unchanged, retired, counts,
+        "golden record built for %d entity(ies): %d written, %d refreshed, "
+        "%d unchanged, %d retired %s",
+        len(entities), written, refreshed, unchanged, retired, counts,
     )
-    return BuildResult(len(entities), written, unchanged, retired, counts)
+    return BuildResult(len(entities), written, refreshed, unchanged, retired, counts)

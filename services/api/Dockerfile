@@ -10,7 +10,12 @@ COPY services/api/pyproject.toml services/api/pyproject.toml
 RUN uv sync --frozen --no-dev --package api-service --no-install-project
 
 COPY services/api/src services/api/src
-RUN uv sync --frozen --no-dev --package api-service
+COPY services/api/tests services/api/tests
+# Dev group included so the suite runs in-container like every other service —
+# this host's Application Control policy blocks native extensions outside Docker.
+RUN uv sync --frozen --package api-service
+
+ENV PYTHONPATH=/app/services/api/src
 
 EXPOSE 8000
 CMD ["uv", "run", "--frozen", "--no-dev", "--no-sync", "uvicorn", "api_service.main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "services/api/src"]

@@ -28,9 +28,12 @@ This repository is being built incrementally.
   `company_id`, link records from different vendors to the same real-world
   entity, and merge without ever destroying an id.
   (`docs/decisions/0007-increment-7-entity-resolution.md`)
-- **Increment 8** (this state) — golden record: decide the single trusted value
-  per entity per field, with the deciding rule, the rejected alternatives, and
-  full history. (`docs/decisions/0008-increment-8-golden-record.md`)
+- **Increment 8** — golden record: decide the single trusted value per entity
+  per field, with the deciding rule, the rejected alternatives, and full
+  history. (`docs/decisions/0008-increment-8-golden-record.md`)
+- **Increment 9** (this state) — provenance and the read API: trace any trusted
+  value back to the source cell it came from, and serve it over HTTP.
+  (`docs/decisions/0009-increment-9-provenance-api.md`)
 
 ## Repository layout
 
@@ -407,6 +410,74 @@ address_line1  465 California St 9th Floor     06:10 -> current vendor_c
 Only records actually linked to an entity contribute, so a quarantined record
 stays fully stored while backing no trusted value.
 
+## Provenance: why does a value say that?
+
+Every stage recorded its reasoning, but each in its own table. `explain` is the
+join that makes the chain answerable in one question — and it shows the five
+judgements **side by side, never summed**:
+
+```powershell
+docker compose run --rm golden golden explain --entity-id <id> --field address_line1
+```
+
+```
+trusted value : 465 California St 9th Floor
+chosen by     : most_recent (confidence 0.750)
+agreement     : 1 source(s) agreed, 2 distinct value(s) competed
+
+    vendor_dc  real_company_sample.csv row 1
+      column 'ADDRESS' held '1779 Massachusetts Ave NW #815'
+      column interpreted : exact_alias @ 1.000 (auto_accepted)
+      record validated   : warning
+      linked to entity   : no_match @ 0.000 (new_entity)
+      vendor reliability : 0.70
+
+ -> vendor_c  vendor_c_update.csv row 1
+      column 'address' held '465 California St 9th Floor'
+      linked to entity   : website_domain @ 0.960 (auto_linked)
+      vendor reliability : 0.85
+
+previously:
+      1779 Massachusetts Ave NW #815  until 2026-08-13 06:10
+```
+
+| Question | Number |
+| --- | --- |
+| Did we read the column correctly? | mapping confidence |
+| Is the value usable as that field? | validation result |
+| Is this record the same entity? | match confidence |
+| How much do we believe this vendor? | source reliability |
+| Why did this value beat the others? | golden strategy + confidence |
+
+A single blended score would also destroy the ability to say *"the value is
+fine, we're just unsure it's the same company"*.
+
+## Read API
+
+`http://localhost:8000` — read-only by design. Data enters through the pipeline,
+where it acquires the provenance these endpoints report; an endpoint that could
+write a golden value would create records nothing can explain.
+
+```powershell
+# Find an entity by ANY identifier a vendor ever gave it — including ones
+# that lost the survivorship contest
+curl.exe "http://localhost:8000/entities?q=asiafoundation.org"
+
+curl.exe "http://localhost:8000/entities/<id>"                          # trusted record + sources
+curl.exe "http://localhost:8000/entities/<id>/explain/company_name"     # full lineage
+curl.exe "http://localhost:8000/entities/<id>/timeline"                 # everything that happened
+curl.exe "http://localhost:8000/records/<id>"                           # what became of one source row
+```
+
+Merged ids keep answering: every endpoint resolves tombstones and reports both
+`requested_entity_id` and the surviving `entity_id`. An id that stops working is
+not a stable id.
+
+Interactive docs at http://localhost:8000/docs.
+
+> The API is **unauthenticated**. It is local-first and read-only, but anything
+> beyond a laptop needs auth before exposure.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -420,6 +491,9 @@ docker compose run --rm normalization python -m pytest tests -v
 docker compose run --rm validation python -m pytest tests -v
 docker compose run --rm resolution python -m pytest tests -v
 docker compose run --rm golden python -m pytest tests -v
+
+# api has no `uv run` entrypoint in compose, so invoke it explicitly
+docker compose run --rm api uv run --frozen --no-sync python -m pytest services/api/tests -v
 ```
 
 ## Future increments
@@ -428,15 +502,10 @@ The pipeline is end to end: a messy CSV lands in `data/inbox/` and becomes a
 trusted, provenanced, versioned canonical record with no manual step. What is
 still open:
 
-- **Provenance surfacing** (spec step 16 in full) — the data is all there
-  (`attribute_observation`, `validation_result`, `record_entity_link`,
-  `golden_attribute` history), but there is no single "explain this value"
-  endpoint that walks the chain from golden value back to the source cell.
-- **Read API** — the `api` service still only serves health checks; the golden
-  views are reachable via psql only.
 - **Metrics and dashboards** — Grafana is provisioned but the pipeline emits no
   business metrics (quarantine depth, open match candidates, contested golden
   fields, mapping review backlog).
 - **Re-blocking** — two entities that should have merged stay separate until a
   third record matches both. Nothing re-examines old entities when new keys
   arrive.
+- **API authentication** — the read API is open. Fine locally, not beyond.

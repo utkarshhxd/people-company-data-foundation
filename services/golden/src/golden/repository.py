@@ -82,13 +82,41 @@ def current_values(conn: psycopg.Connection, entity_id: str) -> dict[str, dict[s
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT golden_id, canonical_field, value, confidence, strategy
+            SELECT golden_id, canonical_field, value, confidence, strategy,
+                   supporting_sources, competing_values
             FROM golden_attribute
             WHERE entity_id = %s AND valid_to IS NULL
             """,
             (entity_id,),
         )
         return {row["canonical_field"]: row for row in cur}
+
+
+def refresh_evidence(conn: psycopg.Connection, golden_id: str, choice) -> None:
+    """Same value, changed justification.
+
+    A fourth vendor agreeing does not make the value newly true, so this is not
+    a history event and valid_from must not move — but leaving the confidence
+    and the agreeing-source list stale would misreport how well supported the
+    value is. The fact is unchanged; only our reasons for believing it grew.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE golden_attribute
+            SET confidence         = %s,
+                supporting_sources = %s,
+                competing_values   = %s,
+                evidence           = %s,
+                winning_record_id  = %s,
+                winning_source_id  = %s,
+                raw_value          = %s
+            WHERE golden_id = %s
+            """,
+            (choice.confidence, choice.supporting_sources, choice.competing_values,
+             Json(choice.evidence), choice.winning_record_id, choice.winning_source_id,
+             choice.raw_value, golden_id),
+        )
 
 
 def close_value(conn: psycopg.Connection, golden_id: str) -> None:

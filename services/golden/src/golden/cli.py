@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 
+from common import lineage
 from common.db import connect
 
 from golden import repository
@@ -28,6 +29,12 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--entity-id", required=True)
     history.add_argument("--field")
 
+    explain = sub.add_parser(
+        "explain", help="trace one field back to the source cells it came from"
+    )
+    explain.add_argument("--entity-id", required=True)
+    explain.add_argument("--field", required=True)
+
     sub.add_parser("stats", help="counts across all entities")
     return parser
 
@@ -42,8 +49,8 @@ def cmd_build(args) -> int:
         return 2
     print(
         f"{result.entities} entity(ies): {result.written} value(s) written, "
-        f"{result.unchanged} unchanged, {result.retired} retired "
-        f"{json.dumps(result.counts)}"
+        f"{result.refreshed} evidence-refreshed, {result.unchanged} unchanged, "
+        f"{result.retired} retired {json.dumps(result.counts)}"
     )
     return 0
 
@@ -84,6 +91,49 @@ def cmd_history(args) -> int:
     return 0
 
 
+def cmd_explain(args) -> int:
+    """The five dimensions side by side, never added together."""
+    explanation = lineage.explain_value(args.entity_id, args.field)
+    if explanation is None:
+        print(f"error: nothing recorded for {args.field}", file=sys.stderr)
+        return 2
+
+    golden = explanation["golden"]
+    print(f"entity {explanation['entity_id']}  field {args.field}")
+    if golden:
+        print(f"\ntrusted value : {golden['value']}")
+        print(f"chosen by     : {golden['strategy']} "
+              f"(confidence {golden['confidence']})")
+        print(f"in force since: {golden['valid_from']:%Y-%m-%d %H:%M}")
+        print(f"agreement     : {golden['supporting_sources']} source(s) agreed, "
+              f"{golden['competing_values']} distinct value(s) competed")
+
+    print("\nwhere it came from:")
+    for row in explanation["contributions"]:
+        marker = "->" if row["is_winning_record"] else ("~ " if row["agrees_with_golden"] else "  ")
+        print(f"\n {marker} {row['source_name']}  {row['file_name']} row {row['row_number']}")
+        print(f"      column {row['source_column']!r} held {row['raw_value']!r}")
+        print(f"      normalized to {row['normalized_value']!r}")
+        # Four separate judgements about four separate questions.
+        print(f"      column interpreted : {row['mapping_method']} @ "
+              f"{row['mapping_confidence']} ({row['mapping_status']})")
+        print(f"      record validated   : {row['record_validation_status']}")
+        print(f"      linked to entity   : {row['match_method']} @ "
+              f"{row['match_confidence']} ({row['match_status']})")
+        print(f"      vendor reliability : {row['source_reliability']}")
+        for judgement in row["validation"]:
+            if judgement["outcome"] == "fail":
+                print(f"      ! {judgement['severity']} {judgement['rule_id']}: "
+                      f"{judgement['message']}")
+
+    if len(explanation["history"]) > 1:
+        print("\npreviously:")
+        for row in explanation["history"]:
+            if not row["is_current"]:
+                print(f"      {row['value']}  until {row['valid_to']:%Y-%m-%d %H:%M}")
+    return 0
+
+
 def cmd_stats(_args) -> int:
     with connect() as conn:
         print(json.dumps(repository.golden_counts(conn), indent=2))
@@ -100,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_show(args)
     if args.command == "history":
         return cmd_history(args)
+    if args.command == "explain":
+        return cmd_explain(args)
     return cmd_stats(args)
 
 

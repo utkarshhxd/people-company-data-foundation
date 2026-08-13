@@ -6,6 +6,7 @@ into floats. Ingestion's whole job is to record the source verbatim.
 """
 
 import csv
+from collections.abc import Iterator
 from pathlib import Path
 
 import polars as pl
@@ -77,6 +78,7 @@ def read_excel(path: Path) -> tuple[list[str], list[Row]]:
 
 
 def read_file(path: Path) -> tuple[list[str], list[Row]]:
+    """Read a whole file into memory. Prefer `iter_file` for anything large."""
     suffix = path.suffix.lower()
     if suffix in CSV_SUFFIXES:
         return read_csv(path)
@@ -85,3 +87,80 @@ def read_file(path: Path) -> tuple[list[str], list[Row]]:
     raise UnsupportedFileType(
         f"{path.name}: expected one of {sorted(CSV_SUFFIXES | EXCEL_SUFFIXES)}"
     )
+
+
+DEFAULT_BATCH_SIZE = 5000
+
+
+def iter_csv(path: Path, batch_size: int) -> Iterator[tuple[list[str], list[Row]]]:
+    """Stream a CSV in batches, so peak memory is a batch and not the file.
+
+    Polars reads in its own internal chunks and we regroup them to the requested
+    size, so a caller asking for 5,000 gets 5,000 regardless of how the reader
+    decided to split the file.
+    """
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    columns = disambiguate(_csv_header(path, delimiter))
+    if not columns:
+        return
+
+    # scan_csv is lazy: rows are pulled from disk as batches are consumed, so
+    # peak memory is a batch rather than the file. Every option here mirrors
+    # read_csv exactly — batching must not change what is read.
+    lazy = pl.scan_csv(
+        path,
+        has_header=False,
+        skip_rows=1,
+        new_columns=columns,
+        separator=delimiter,
+        infer_schema=False,
+        truncate_ragged_lines=False,
+        quote_char='"',
+    )
+
+    pending: list[Row] = []
+    try:
+        for frame in lazy.collect_batches(chunk_size=batch_size):
+            # Regrouped, because the reader chooses its own chunk boundaries and
+            # a caller asking for 5,000 should get 5,000.
+            pending.extend(_frame_to_rows(frame))
+            while len(pending) >= batch_size:
+                yield columns, pending[:batch_size]
+                pending = pending[batch_size:]
+    except pl.exceptions.NoDataError:
+        # A header with no rows under it. An empty export is a normal thing for
+        # a vendor to send, and it means zero records — not a failure.
+        return
+    if pending:
+        yield columns, pending
+
+
+def iter_excel(path: Path, batch_size: int) -> Iterator[tuple[list[str], list[Row]]]:
+    """Batch an Excel file after reading it.
+
+    Unlike CSV there is no streaming path: the format is a zip archive whose
+    rows cannot be read without decompressing the sheet, so the workbook is
+    necessarily resident. Batching still bounds the size of each transaction and
+    keeps the write path identical to CSV — but peak memory here is the file,
+    and that limit is real rather than an oversight.
+    """
+    columns, rows = read_excel(path)
+    for start in range(0, len(rows), batch_size):
+        yield columns, rows[start : start + batch_size]
+
+
+def iter_file(
+    path: Path, batch_size: int = DEFAULT_BATCH_SIZE
+) -> Iterator[tuple[list[str], list[Row]]]:
+    """Yield (columns, rows) a batch at a time. Empty files yield nothing."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    suffix = path.suffix.lower()
+    if suffix in CSV_SUFFIXES:
+        yield from iter_csv(path, batch_size)
+    elif suffix in EXCEL_SUFFIXES:
+        yield from iter_excel(path, batch_size)
+    else:
+        raise UnsupportedFileType(
+            f"{path.name}: expected one of {sorted(CSV_SUFFIXES | EXCEL_SUFFIXES)}"
+        )

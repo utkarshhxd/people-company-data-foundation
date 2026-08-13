@@ -30,6 +30,51 @@ def get_or_create_source(
         return str(cur.fetchone()[0])
 
 
+def find_in_flight_batch(
+    conn: psycopg.Connection, source_id: str, file_hash: str
+) -> str | None:
+    """A batch of this exact file that is still running.
+
+    Without this, two concurrent ingests of the same file both see no COMPLETED
+    batch and both proceed, duplicating every row. The completed-batch check
+    alone cannot catch it because neither has finished yet.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT batch_id FROM batch
+            WHERE source_id = %s AND file_hash = %s AND status = 'running'
+            ORDER BY started_at LIMIT 1
+            """,
+            (source_id, file_hash),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
+
+
+def find_batches_from_other_sources(
+    conn: psycopg.Connection, source_id: str, file_hash: str
+) -> list[tuple[str, str]]:
+    """The same file content already ingested under a DIFFERENT source name.
+
+    Not blocked: two vendors genuinely can ship identical content, and each is a
+    separate claim about the world that the pipeline should record separately.
+    But it is far more often a typo in --source-name, so it is surfaced.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.source_name, b.batch_id
+            FROM batch b
+            JOIN source s ON s.source_id = b.source_id
+            WHERE b.file_hash = %s AND b.source_id <> %s AND b.status = 'completed'
+            ORDER BY b.started_at
+            """,
+            (file_hash, source_id),
+        )
+        return [(name, str(batch_id)) for name, batch_id in cur.fetchall()]
+
+
 def find_completed_batch(conn: psycopg.Connection, source_id: str, file_hash: str) -> str | None:
     with conn.cursor() as cur:
         cur.execute(

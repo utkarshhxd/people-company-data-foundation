@@ -101,12 +101,16 @@ def validate_record(
 
         for judgement in judgements:
             if judgement.outcome == FAIL:
-                failed_rules.append(judgement.rule_id)
+                # Info-severity failures are recorded in validation_result but
+                # kept out of failed_rules, which is read as "what is wrong with
+                # this record" — coverage notes would drown the real problems.
                 if judgement.severity == SEVERITY_ERROR:
                     errors += 1
                     error_rules.append(judgement.rule_id)
+                    failed_rules.append(judgement.rule_id)
                 elif judgement.severity == SEVERITY_WARNING:
                     warnings += 1
+                    failed_rules.append(judgement.rule_id)
             result_rows.append((
                 obs["observation_id"], record_id, batch_id, "attribute",
                 obs["canonical_field"], judgement.rule_id, judgement.severity,
@@ -116,12 +120,13 @@ def validate_record(
 
     for judgement in judge_record(observations, entity_type):
         if judgement.outcome == FAIL:
-            failed_rules.append(judgement.rule_id)
             if judgement.severity == SEVERITY_ERROR:
                 errors += 1
                 error_rules.append(judgement.rule_id)
+                failed_rules.append(judgement.rule_id)
             elif judgement.severity == SEVERITY_WARNING:
                 warnings += 1
+                failed_rules.append(judgement.rule_id)
         result_rows.append((
             None, record_id, batch_id, "record", None, judgement.rule_id,
             judgement.severity, judgement.outcome, judgement.message,

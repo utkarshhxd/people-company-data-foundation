@@ -65,6 +65,32 @@ def test_a_row_with_any_value_passes_the_blank_check():
     assert outcome_of(judgements, "record.all_values_missing") == PASS
 
 
+def test_missing_core_fields_warn_that_the_record_is_illegible():
+    """Resolvable by vendor id, but nobody could read it and recognise anything."""
+    judgements = judge_record([obs("company_external_id", "501")], "company")
+    core = judgement_for(judgements, "record.core_fields")
+    assert core.outcome == FAIL
+    assert core.details["missing"] == ["company_name"]
+    # Still resolvable, so this must not be an error.
+    assert core.severity == "warning"
+    assert outcome_of(judgements, "record.has_identifier") == PASS
+
+
+def test_a_complete_record_passes_the_core_check():
+    judgements = judge_record(
+        [obs("company_name", "Acme"), obs("website", "acme.com")], "company")
+    assert outcome_of(judgements, "record.core_fields") == PASS
+
+
+def test_absent_expected_fields_are_recorded_but_never_judged():
+    """Coverage reporting, not a verdict — plenty of good records lack these."""
+    judgements = judge_record([obs("company_name", "Acme")], "company")
+    expected = judgement_for(judgements, "record.expected_fields")
+    assert expected.outcome == FAIL
+    assert expected.severity == "info"
+    assert "website" in expected.details["missing"]
+
+
 def test_mostly_unmapped_columns_warn_that_the_row_is_barely_understood():
     observations = [obs("email", "a@b.com")] + [obs(None, "x") for _ in range(9)]
     coverage = judgement_for(judge_record(observations, "person"), "record.mapping_coverage")

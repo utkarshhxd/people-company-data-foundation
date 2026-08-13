@@ -2,8 +2,11 @@
 
 These judge the row as a whole rather than any single value. The question they
 answer is not "is this field well-formed" but "could this record ever be
-resolved to a real-world entity?" — which is precisely what the next stages
-need to know, and which no attribute rule can see on its own.
+resolved to a real-world entity, and is it worth having?" — which no attribute
+rule can see on its own.
+
+Which fields matter, and how much, lives in `required_fields.py` so the policy
+can be read and changed without reading the rule mechanics.
 
 Failing here does NOT mean the record is discarded. It means the record is not
 safe to resolve yet; quarantine routes it for review with everything intact.
@@ -11,24 +14,20 @@ safe to resolve yet; quarantine routes it for review with everything intact.
 
 from dataclasses import dataclass
 
+from validation.required_fields import (
+    NAME_PART_FIELDS,
+    identifying_fields,
+    missing_core,
+    missing_expected,
+)
 from validation.rules import (
     FAIL,
     PASS,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARNING,
     Judgement,
 )
-
-# Attributes that can, on their own, stand for a real-world entity. A phone
-# number is deliberately absent from both: it identifies a line, not a person or
-# a company, and two people sharing a switchboard would collapse into one.
-IDENTIFYING_FIELDS = {
-    "person": ("email", "linkedin_url", "person_external_id", "full_name"),
-    "company": ("company_name", "legal_name", "website", "company_external_id", "email"),
-}
-
-# Name parts that together stand in for a full name.
-NAME_PART_FIELDS = ("first_name", "last_name")
 
 MIN_MAPPING_COVERAGE = 0.5
 
@@ -72,7 +71,7 @@ def rule_has_identifier(facts: RecordFacts) -> Judgement:
     This is the rule that most often decides quarantine, so it names exactly
     what was missing rather than just failing.
     """
-    candidates = IDENTIFYING_FIELDS[facts.entity_type]
+    candidates = identifying_fields(facts.entity_type)
     found = [f for f in candidates if f in facts.present_fields]
 
     # A first and last name together are as good as a full name.
@@ -91,6 +90,34 @@ def rule_has_identifier(facts: RecordFacts) -> Judgement:
         "no identifying attribute, so this row cannot be resolved to an entity",
         {"required_any_of": list(candidates),
          "present_fields": sorted(facts.present_fields)},
+    )
+
+
+def rule_core_fields(facts: RecordFacts) -> Judgement:
+    """Resolvable but thin: a record nobody could read and recognise.
+
+    A warning rather than an error, because a record identified only by a
+    vendor id is still worth keeping — later files routinely fill in the rest.
+    """
+    missing = missing_core(facts.entity_type, facts.present_fields)
+    if not missing:
+        return Judgement("record.core_fields", SEVERITY_WARNING, PASS)
+    return Judgement(
+        "record.core_fields", SEVERITY_WARNING, FAIL,
+        f"missing the field(s) that make this record legible: {', '.join(missing)}",
+        {"missing": missing},
+    )
+
+
+def rule_expected_fields(facts: RecordFacts) -> Judgement:
+    """Recorded, never judged — coverage reporting rather than a verdict."""
+    missing = missing_expected(facts.entity_type, facts.present_fields)
+    if not missing:
+        return Judgement("record.expected_fields", SEVERITY_INFO, PASS)
+    return Judgement(
+        "record.expected_fields", SEVERITY_INFO, FAIL,
+        f"{len(missing)} commonly-present field(s) absent",
+        {"missing": missing},
     )
 
 
@@ -115,7 +142,13 @@ def rule_mapping_coverage(facts: RecordFacts) -> Judgement:
     )
 
 
-RECORD_RULES = (rule_all_values_missing, rule_has_identifier, rule_mapping_coverage)
+RECORD_RULES = (
+    rule_all_values_missing,
+    rule_has_identifier,
+    rule_core_fields,
+    rule_expected_fields,
+    rule_mapping_coverage,
+)
 
 
 def judge_record(observations: list[dict], entity_type: str) -> list[Judgement]:

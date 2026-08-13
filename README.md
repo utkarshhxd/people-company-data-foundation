@@ -34,9 +34,12 @@ This repository is being built incrementally.
 - **Increment 9** — provenance and the read API: trace any trusted value back to
   the source cell it came from, and serve it over HTTP.
   (`docs/decisions/0009-increment-9-provenance-api.md`)
-- **Increment 10** (this state) — pipeline metrics: make the quiet failure modes
-  visible — review backlogs, contested values, and how long the oldest item has
-  been waiting. (`docs/decisions/0010-increment-10-pipeline-metrics.md`)
+- **Increment 10** — pipeline metrics: make the quiet failure modes visible —
+  review backlogs, contested values, and how long the oldest item has been
+  waiting. (`docs/decisions/0010-increment-10-pipeline-metrics.md`)
+- **Increment 11** (this state) — review findings: streamed batch ingestion,
+  validation rules split per concern, address rules added, duplicate detection
+  hardened. (`docs/decisions/0011-increment-11-review-findings.md`)
 
 ## Repository layout
 
@@ -113,7 +116,42 @@ docker compose run --rm ingestion ingest /data/inbox/messy_people.csv `
 Drop your own files into `data/inbox/` (bind-mounted to `/data/inbox` in the
 container). Useful flags: `--record-id-column <col>` to use a natural key
 instead of the row number, `--allow-reingest` to deliberately re-ingest a file
-already seen, `--reliability 0.8` to record how much this source is trusted.
+already seen, `--reliability 0.8` to record how much this source is trusted,
+`--batch-size N` to change how many rows are read and committed at a time
+(default 5,000).
+
+### Large files
+
+Rows are **streamed and committed a batch at a time**, so peak memory is a batch
+rather than the file:
+
+| Rows | Peak memory, whole file | Peak memory, batched |
+| --- | --- | --- |
+| 20,000 | 15.4 MB | **7.8 MB** |
+| 100,000 | 77.0 MB | **7.8 MB** |
+| 250,000 | 193.5 MB | **7.8 MB** |
+
+If a batch fails part-way, the rows already written **stay** — they are what the
+source said — and the batch is marked `failed`. Every downstream stage requires
+`completed`, so partial rows are inert rather than dangerous.
+
+Excel is batched but still read whole: the format is a zip archive whose rows
+cannot be reached without decompressing the sheet. That limit is real, not an
+oversight.
+
+### Duplicate files
+
+A file is identified by the **SHA-256 of its contents**, not its name, so a
+renamed copy is caught and a same-named file with new contents is not. Three
+outcomes:
+
+- already ingested for this source → **blocked** (exit 3, `--allow-reingest` overrides)
+- currently being ingested for this source → **blocked**, and `--allow-reingest`
+  deliberately does *not* override it — re-ingesting later is a choice, racing
+  yourself never is
+- identical content under a *different* source name → **warns and continues**,
+  since two vendors genuinely can ship the same file, though it is usually a
+  typo in `--source-name`
 
 Exit codes: `0` ok, `2` bad input, `3` already ingested (use
 `--allow-reingest`), `4` rows committed but Kafka events not published.
@@ -176,6 +214,16 @@ Mappings are stored against a **source schema** (a column layout), not a
 batch, so a human correction is reused the next time that source sends the
 same columns.
 
+**No AI is used here, deliberately.** Mapping is four deterministic strategies.
+The same file must always produce the same mapping — layouts are stored and
+reused, so a non-deterministic mapper would make the same vendor's data mean
+different things on different days — and every decision must stay auditable.
+The hard cases (`location` → city or address? `ID` → whose id?) are exactly
+where a model guesses confidently and wrongly, and those already route to a
+human by construction. The place AI would genuinely help is *assisting the
+review queue* — proposing a field with a rationale for a human to accept — never
+in the automatic path. See `docs/decisions/0011-increment-11-review-findings.md`.
+
 ## Normalization
 
 Also automatic: the `normalization` service consumes `schema.mapped` and writes
@@ -220,6 +268,26 @@ difference decides what happens next:
 - `warning` — plausible but suspect: a phone with no country code, `employees`
   written as `50-100`, a role mailbox (`info@`) on a *person* record.
 - `info` — recorded, no judgement implied.
+
+Rules live one module per concern under `services/validation/src/validation/rules/`
+— `email.py`, `phone.py`, `url.py`, `name.py`, `address.py`, `number.py`,
+`postal.py` — so adding a rule means editing one small file about one subject.
+Which fields a record must carry lives separately again, in
+`required_fields.py`, in three tiers:
+
+- **identifying** (error) — without one of these the record can never be resolved
+  to an entity. Enforced as a *set*: an email alone is enough, and so is a name.
+- **core** (warning) — the fields that make a record legible. A company known
+  only by a vendor id is resolvable but useless to read.
+- **expected** (info) — commonly present, routinely and legitimately absent.
+
+**Addresses are checked for plausibility, never format.** Any string can be a
+street address and formats vary by country, so every address rule is a warning
+or info and none can reject a value for being foreign or oddly punctuated. They
+catch placeholder text (`same as above`), whitespace lost upstream
+(`1720WisconsinAveNW`), values too short to locate anything, and other fields
+that drifted into the address column. A missing street number is recorded as
+*info* only — PO boxes and named buildings legitimately have none.
 
 Two details worth knowing:
 

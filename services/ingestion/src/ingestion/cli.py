@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from ingestion.pipeline import ReingestBlocked, ingest
-from ingestion.readers import CSV_SUFFIXES, UnsupportedFileType
+from ingestion.readers import DEFAULT_BATCH_SIZE, CSV_SUFFIXES, UnsupportedFileType
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +24,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="column holding a natural key; defaults to the row number",
     )
     parser.add_argument("--reliability", type=float, default=0.5, help="source reliability, 0-1")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        metavar="N",
+        help=(
+            f"rows read and committed at a time (default {DEFAULT_BATCH_SIZE}). "
+            "Lower it for very wide files, raise it for narrow ones."
+        ),
+    )
     parser.add_argument(
         "--allow-reingest",
         action="store_true",
@@ -56,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             reliability=args.reliability,
             record_id_column=args.record_id_column,
             allow_reingest=args.allow_reingest,
+            batch_size=args.batch_size,
         )
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -1,0 +1,205 @@
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.types.json import Json
+
+from golden.strategies import Observation
+
+
+def entities_for_batch(conn: psycopg.Connection, batch_id: str) -> list[dict[str, Any]]:
+    """Entities this batch touched — including ones it merely added evidence to,
+    since a new observation can change a golden value for an entity first seen
+    years ago."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT e.entity_id, e.entity_type
+            FROM record_entity_link l
+            JOIN entity e ON e.entity_id = l.entity_id
+            WHERE l.batch_id = %s AND e.status = 'active'
+            """,
+            (batch_id,),
+        )
+        return cur.fetchall()
+
+
+def get_entity(conn: psycopg.Connection, entity_id: str) -> dict[str, Any] | None:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT entity_id, entity_type, status, merged_into_entity_id
+            FROM entity WHERE entity_id = %s
+            """,
+            (entity_id,),
+        )
+        return cur.fetchone()
+
+
+def observations_for_entity(
+    conn: psycopg.Connection, entity_id: str
+) -> dict[str, list[Observation]]:
+    """Every confirmed, non-null value linked to this entity, by canonical field.
+
+    Only observations from records that are actually linked to the entity are
+    considered, so a quarantined record contributes nothing to a trusted value
+    even though it remains fully stored.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT o.canonical_field, o.normalized_value, o.raw_value,
+                   o.source_id, s.source_name, s.reliability,
+                   o.record_id, o.observed_at
+            FROM record_entity_link l
+            JOIN attribute_observation o ON o.record_id = l.record_id
+            JOIN source s ON s.source_id = o.source_id
+            WHERE l.entity_id = %s
+              AND o.canonical_field IS NOT NULL
+              AND o.normalized_value IS NOT NULL
+            ORDER BY o.canonical_field, o.observed_at
+            """,
+            (entity_id,),
+        )
+        by_field: dict[str, list[Observation]] = {}
+        for (field, value, raw, source_id, source_name, reliability,
+             record_id, observed_at) in cur:
+            by_field.setdefault(field, []).append(
+                Observation(
+                    value=value,
+                    raw_value=raw,
+                    source_id=str(source_id),
+                    source_name=source_name,
+                    reliability=float(reliability),
+                    record_id=str(record_id),
+                    observed_at=observed_at,
+                )
+            )
+        return by_field
+
+
+def current_values(conn: psycopg.Connection, entity_id: str) -> dict[str, dict[str, Any]]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT golden_id, canonical_field, value, confidence, strategy
+            FROM golden_attribute
+            WHERE entity_id = %s AND valid_to IS NULL
+            """,
+            (entity_id,),
+        )
+        return {row["canonical_field"]: row for row in cur}
+
+
+def close_value(conn: psycopg.Connection, golden_id: str) -> None:
+    """Close a value's validity window instead of overwriting it.
+
+    Must happen BEFORE the replacement is inserted: exactly one row per
+    (entity, field) may have valid_to IS NULL, and that partial unique index is
+    what makes "golden" mean something. The old value stays queryable forever —
+    that history is the difference between a trusted record and a merely current
+    one.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE golden_attribute SET valid_to = now() WHERE golden_id = %s",
+            (golden_id,),
+        )
+
+
+def link_supersession(
+    conn: psycopg.Connection, old_golden_id: str, new_golden_id: str
+) -> None:
+    """Point a closed value at what replaced it, so the chain is walkable."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE golden_attribute SET superseded_by = %s WHERE golden_id = %s",
+            (new_golden_id, old_golden_id),
+        )
+
+
+def insert_value(
+    conn: psycopg.Connection, entity_id: str, entity_type: str,
+    canonical_field: str, choice,
+) -> str:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO golden_attribute (
+                entity_id, entity_type, canonical_field, value, raw_value,
+                strategy, confidence, winning_record_id, winning_source_id,
+                supporting_sources, competing_values, evidence
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING golden_id
+            """,
+            (entity_id, entity_type, canonical_field, choice.value, choice.raw_value,
+             choice.strategy, choice.confidence, choice.winning_record_id,
+             choice.winning_source_id, choice.supporting_sources,
+             choice.competing_values, Json(choice.evidence)),
+        )
+        return str(cur.fetchone()[0])
+
+
+# A field that loses every supporting observation stops being current but is not
+# deleted: we once believed it, and that stays on the record.
+retire_field = close_value
+
+
+def golden_for_entity(conn: psycopg.Connection, entity_id: str) -> list[dict[str, Any]]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT g.canonical_field, g.value, g.strategy, g.confidence,
+                   g.supporting_sources, g.competing_values, g.evidence,
+                   s.source_name
+            FROM golden_attribute g
+            JOIN source s ON s.source_id = g.winning_source_id
+            WHERE g.entity_id = %s AND g.valid_to IS NULL
+            ORDER BY g.canonical_field
+            """,
+            (entity_id,),
+        )
+        return cur.fetchall()
+
+
+def history_for_entity(
+    conn: psycopg.Connection, entity_id: str, canonical_field: str | None
+) -> list[dict[str, Any]]:
+    clause = "AND g.canonical_field = %s" if canonical_field else ""
+    params = [entity_id] + ([canonical_field] if canonical_field else [])
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"""
+            SELECT g.canonical_field, g.value, g.strategy, g.confidence,
+                   g.valid_from, g.valid_to, (g.valid_to IS NULL) AS is_current,
+                   s.source_name
+            FROM golden_attribute g
+            JOIN source s ON s.source_id = g.winning_source_id
+            WHERE g.entity_id = %s {clause}
+            ORDER BY g.canonical_field, g.valid_from
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
+def golden_counts(conn: psycopg.Connection) -> dict[str, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT count(*) FILTER (WHERE valid_to IS NULL)  AS current_values,
+                   count(*) FILTER (WHERE valid_to IS NOT NULL) AS superseded_values,
+                   count(DISTINCT entity_id) FILTER (WHERE valid_to IS NULL) AS entities,
+                   count(*) FILTER (WHERE valid_to IS NULL AND competing_values > 1)
+                       AS contested_values
+            FROM golden_attribute
+            """
+        )
+        current, superseded, entities, contested = cur.fetchone()
+        return {
+            "current_values": current,
+            "superseded_values": superseded,
+            "entities": entities,
+            "contested_values": contested,
+        }

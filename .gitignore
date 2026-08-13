@@ -6,6 +6,7 @@ data/inbox/*
 !data/inbox/invalid_company.csv
 !data/inbox/ambiguous_company.csv
 !data/inbox/near_match_company.csv
+!data/inbox/vendor_c_update.csv
 .venv/
 __pycache__/
 *.pyc

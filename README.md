@@ -24,10 +24,13 @@ This repository is being built incrementally.
 - **Increment 6** — quarantine: hold invalid records back from entity
   resolution without losing them, with a human review path in and out.
   (`docs/decisions/0006-increment-6-quarantine.md`)
-- **Increment 7** (this state) — entity resolution: assign a stable
-  `person_id` / `company_id`, link records from different vendors to the same
-  real-world entity, and merge without ever destroying an id.
+- **Increment 7** — entity resolution: assign a stable `person_id` /
+  `company_id`, link records from different vendors to the same real-world
+  entity, and merge without ever destroying an id.
   (`docs/decisions/0007-increment-7-entity-resolution.md`)
+- **Increment 8** (this state) — golden record: decide the single trusted value
+  per entity per field, with the deciding rule, the rejected alternatives, and
+  full history. (`docs/decisions/0008-increment-8-golden-record.md`)
 
 ## Repository layout
 
@@ -43,6 +46,7 @@ services/mapping/        # schema-mapping consumer + map-schema/review CLIs
 services/normalization/  # normalization consumer + normalize CLI
 services/validation/     # validation consumer + validate/quarantine CLIs
 services/resolution/     # entity-resolution consumer + resolve CLI
+services/golden/         # golden-record consumer + golden CLI
 data/inbox/              # local drop dir, bind-mounted into the ingestion container
 ```
 
@@ -349,6 +353,60 @@ sic_description vendor_dc Associations
 Every value is still attributed to the vendor that reported it, and nothing was
 overwritten.
 
+## Golden record
+
+The deliverable: one trusted value per entity per field, with the rule that
+decided it, what it beat, and full history. It is **derived, never authored** —
+recomputable at any time from `attribute_observation`.
+
+```powershell
+# Automatic on entities.resolved; re-run after accepting a merge candidate
+docker compose run --rm golden golden build --entity-id <id>
+
+docker compose run --rm golden golden show --entity-id <id>
+docker compose run --rm golden golden history --entity-id <id> --field address_line1
+
+# The flat "trusted canonical data" views
+docker compose exec postgres psql -U pcdf_dev -d pcdf -c "SELECT * FROM golden_company;"
+docker compose exec postgres psql -U pcdf_dev -d pcdf -c "SELECT * FROM golden_person;"
+```
+
+**One rule per field, because fields differ in kind.** An address *changes*, so
+the newest report wins. A company name does not, so disagreement means someone
+is wrong and votes are counted — and one vendor repeating itself is one opinion,
+not many. A founding year is immutable, so a later vendor cannot know better.
+Everything else trusts the most reliable source.
+
+**Confidence comes from source reliability**: start at the winning source's
+reliability, +0.15 per additional agreeing source, −0.10 per rejected competing
+value. A contested field should read as less certain, and it does:
+
+```
+company_name  Asia Foundation        0.750  most_frequent         vendor_dc
+                rejected: The Asia Foundation (vendor_b)
+email         taf@pk.asiafound.org   0.850  most_reliable_source  vendor_dc
+phone         +12025889420           0.300  most_recent           vendor_near
+                rejected: +14153928863 (vendor_b)
+                rejected: 4153928863 (vendor_dc)
+```
+
+That is now the **fifth** distinct confidence-like number in the system, and
+they are never conflated: mapping confidence, validation result, source
+reliability, match confidence, golden-value confidence.
+
+**Current state and history are one table** (`valid_to IS NULL` means current, a
+partial unique index enforces one current value per field). Rebuilding is
+idempotent — an unchanged value keeps its `valid_from`, so that column means
+"since when has this been true", not "when did the builder last run":
+
+```
+address_line1  1779 Massachusetts Ave NW #815  06:08 -> 06:10   vendor_dc
+address_line1  465 California St 9th Floor     06:10 -> current vendor_c
+```
+
+Only records actually linked to an entity contribute, so a quarantined record
+stays fully stored while backing no trusted value.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -361,13 +419,24 @@ docker compose run --rm mapping python -m pytest tests -v
 docker compose run --rm normalization python -m pytest tests -v
 docker compose run --rm validation python -m pytest tests -v
 docker compose run --rm resolution python -m pytest tests -v
+docker compose run --rm golden python -m pytest tests -v
 ```
 
 ## Future increments
 
-Golden records and history/provenance land as new `services/*` and
-`libs/common/` modules — this layout accommodates them without restructuring.
-The golden record is next: entities deliberately hold no attributes, so deciding
-*which* of three reported names is the name is still an open question. It reads
-the `entity_observation` view, which already exposes every value with its source
-and that source's reliability.
+The pipeline is end to end: a messy CSV lands in `data/inbox/` and becomes a
+trusted, provenanced, versioned canonical record with no manual step. What is
+still open:
+
+- **Provenance surfacing** (spec step 16 in full) — the data is all there
+  (`attribute_observation`, `validation_result`, `record_entity_link`,
+  `golden_attribute` history), but there is no single "explain this value"
+  endpoint that walks the chain from golden value back to the source cell.
+- **Read API** — the `api` service still only serves health checks; the golden
+  views are reachable via psql only.
+- **Metrics and dashboards** — Grafana is provisioned but the pipeline emits no
+  business metrics (quarantine depth, open match candidates, contested golden
+  fields, mapping review backlog).
+- **Re-blocking** — two entities that should have merged stay separate until a
+  third record matches both. Nothing re-examines old entities when new keys
+  arrive.

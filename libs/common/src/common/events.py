@@ -13,6 +13,7 @@ TOPIC_SCHEMA_MAPPED = "pcdf.schema.mapped"
 TOPIC_RECORDS_NORMALIZED = "pcdf.records.normalized"
 TOPIC_RECORDS_VALIDATED = "pcdf.records.validated"
 TOPIC_ENTITIES_RESOLVED = "pcdf.entities.resolved"
+TOPIC_GOLDEN_UPDATED = "pcdf.golden.updated"
 
 ALL_TOPICS = (
     TOPIC_RAW_RECORD_INGESTED,
@@ -21,6 +22,7 @@ ALL_TOPICS = (
     TOPIC_RECORDS_NORMALIZED,
     TOPIC_RECORDS_VALIDATED,
     TOPIC_ENTITIES_RESOLVED,
+    TOPIC_GOLDEN_UPDATED,
 )
 
 EVENT_VERSION = 1
@@ -121,6 +123,30 @@ def entities_resolved(
         "candidates": candidates,
         "counts": counts,
         "resolved_at": _isoformat(resolved_at),
+    }
+
+
+def golden_updated(
+    batch_id: str,
+    entity_type: str,
+    entities: int,
+    values_written: int,
+    values_unchanged: int,
+    values_retired: int,
+    counts: dict[str, int],
+    updated_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "event_type": "golden.updated",
+        "event_version": EVENT_VERSION,
+        "batch_id": batch_id,
+        "entity_type": entity_type,
+        "entities": entities,
+        "values_written": values_written,
+        "values_unchanged": values_unchanged,
+        "values_retired": values_retired,
+        "counts": counts,
+        "updated_at": _isoformat(updated_at),
     }
 
 

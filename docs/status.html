@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Team status update for the People & Company Data Foundation: what is built, what is next, and how long the rest takes.">
+<title>Data Foundation Status</title>
+<style>
+  :root {
+    --paper:       #ffffff;
+    --surface:     #f4f6f7;
+    --ink:         #0e141b;
+    --ink-2:       #46535e;
+    --ink-3:       #737f8a;
+    --rule:        #dde3e6;
+    --accent:      #0e6b68;
+    --accent-soft: #e2f0ef;
+    --done:        #3f7d5a;
+    --done-soft:   #e3f0e9;
+    --next:        #b0701d;
+    --next-soft:   #faeedb;
+    --font-sans: ui-sans-serif, -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:       #0d1218;
+      --surface:     #151d25;
+      --ink:         #e6ecf1;
+      --ink-2:       #aab7c2;
+      --ink-3:       #7c8995;
+      --rule:        #26313b;
+      --accent:      #4fb3ae;
+      --accent-soft: #12312f;
+      --done:        #6bb98c;
+      --done-soft:   #16291f;
+      --next:        #d9a154;
+      --next-soft:   #2b2114;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:       #0d1218;
+    --surface:     #151d25;
+    --ink:         #e6ecf1;
+    --ink-2:       #aab7c2;
+    --ink-3:       #7c8995;
+    --rule:        #26313b;
+    --accent:      #4fb3ae;
+    --accent-soft: #12312f;
+    --done:        #6bb98c;
+    --done-soft:   #16291f;
+    --next:        #d9a154;
+    --next-soft:   #2b2114;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 22px 80px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 780px; margin: 0 auto; }
+
+  header { padding: 52px 0 28px; }
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    margin: 0 0 14px;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  .lede { font-size: 18px; color: var(--ink-2); margin: 0; }
+
+  .bar-wrap { margin: 34px 0 10px; }
+  .bar {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+  }
+  .bar span { display: block; }
+  .bar .b-done { background: var(--done); flex: 17; }
+  .bar .b-next { background: var(--next-soft); flex: 9; border-left: 1px solid var(--rule); }
+  .bar-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    margin-top: 12px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+  .bar-key b { color: var(--ink); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+  .dot-done { background: var(--done); }
+  .dot-next { background: var(--next); }
+
+  h2 {
+    font-size: 21px;
+    letter-spacing: -0.015em;
+    margin: 52px 0 6px;
+    font-weight: 680;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+  }
+  h2 .pill {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .p-done { background: var(--done-soft); color: var(--done); }
+  .p-now  { background: var(--surface); color: var(--ink-3); }
+  .p-next { background: var(--next-soft); color: var(--next); }
+  .note { color: var(--ink-2); margin: 0 0 22px; font-size: 15.5px; }
+
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  ul.plain li:last-child { border-bottom: none; }
+  ul.plain .mark { font-family: var(--font-mono); font-size: 13px; }
+  .m-done { color: var(--done); }
+  .m-next { color: var(--next); }
+  ul.plain b { font-weight: 640; }
+  ul.plain .sub { display: block; color: var(--ink-2); font-size: 14.5px; margin-top: 2px; }
+
+  .callout {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    padding: 18px 20px;
+    margin: 24px 0;
+  }
+  .callout p { margin: 0; font-size: 15px; color: var(--ink-2); }
+  .callout p + p { margin-top: 10px; }
+  .callout b { color: var(--ink); }
+
+  .weeks { border-top: 1px solid var(--rule); margin-top: 4px; }
+  .wk {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 18px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .wk .when {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .wk .what b { display: block; font-weight: 640; }
+  .wk .what span { color: var(--ink-2); font-size: 14.5px; }
+  .wk.flag .when { color: var(--accent); font-weight: 600; }
+
+  ol.q { margin: 0; padding-left: 22px; }
+  ol.q li { margin-bottom: 16px; }
+  ol.q b { display: block; margin-bottom: 2px; }
+  ol.q span { color: var(--ink-2); font-size: 15px; }
+
+  footer {
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+
+  .theme-toggle {
+    position: fixed; top: 14px; right: 14px; z-index: 50;
+    padding: 7px 12px;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--rule); border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .theme-toggle:hover { color: var(--ink); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  @media (max-width: 620px) {
+    .wk { grid-template-columns: 1fr; gap: 4px; }
+  }
+  @media print {
+    .theme-toggle { display: none; }
+    body { padding: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" type="button" id="themeToggle"><span id="themeLabel">Dark</span></button>
+
+<div class="page">
+
+  <header>
+    <p class="kicker">Team update · People &amp; Company Data Foundation</p>
+    <h1>The system works. Now we make it safe to rely on.</h1>
+    <p class="lede">
+      We can drop a messy vendor file into a folder and get back clean, trusted company and
+      people data — with a full trail of where every value came from. That part is finished.
+      What's left is proving it holds up with real-size files and handing it over properly.
+    </p>
+
+    <div class="bar-wrap">
+      <div class="bar" role="img" aria-label="17 of 17 build steps complete; 9 hardening phases remaining">
+        <span class="b-done"></span><span class="b-next"></span>
+      </div>
+      <div class="bar-key">
+        <span><span class="dot dot-done"></span><b>Build complete</b> — 17 of 17 steps</span>
+        <span><span class="dot dot-next"></span><b>Hardening</b> — 9 phases to go</span>
+      </div>
+    </div>
+  </header>
+
+  <h2>What's done <span class="pill p-done">Finished</span></h2>
+  <p class="note">
+    Ten pieces of work, all merged and tested. Each one runs automatically — no one has to
+    press anything between them.
+  </p>
+  <ul class="plain">
+    <li><span class="mark m-done">✓</span><span><b>Read files as-is</b><span class="sub">CSV and Excel, stored exactly as the vendor wrote them. Nothing gets "helpfully" reformatted on the way in.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Work out what each column means</b><span class="sub"><code>e_mail</code>, <code>mobile_no</code>, <code>org_name</code> — the system maps them itself, and asks a human when it isn't sure instead of guessing.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Clean values so they can be compared</b><span class="sub">WASHINGTON and Washington become the same thing. The original is always kept alongside.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Check whether values are usable</b><span class="sub">An email with no @ is flagged. A phone with no country code is only a warning, not an error.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Hold back bad records instead of deleting them</b><span class="sub">Nothing is ever thrown away. Bad rows wait in a review queue and a person decides.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Recognise the same company across different files</b><span class="sub">Two vendors spelled it "Asia Foundation" and "The Asia Foundation" — matched anyway, on the website. Every attribute from both is kept.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Pick the one value we trust</b><span class="sub">Newest address wins. Most-agreed-on name wins. Whatever loses is still recorded, with who said it.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Trace any value back to its source</b><span class="sub">One command shows the exact file, row and cell a value came from, and why it beat the alternatives.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>An API to read the data</b><span class="sub">Search, view a company, see its full history.</span></span></li>
+    <li><span class="mark m-done">✓</span><span><b>Dashboards</b><span class="sub">Shows review backlogs and data quality — including how long the oldest item has been waiting.</span></span></li>
+  </ul>
+
+  <h2>In progress <span class="pill p-now">Nothing right now</span></h2>
+  <p class="note">
+    All work is committed and pushed. Nothing is half-finished, which is a good place to plan
+    from — there's no partial work to unwind.
+  </p>
+
+  <h2>What's next <span class="pill p-next">9 phases</span></h2>
+  <p class="note">
+    None of this is new features. It's the work that turns something that works on my machine
+    into something the team can depend on.
+  </p>
+  <ul class="plain">
+    <li><span class="mark m-next">1</span><span><b>Test with real-size files</b> <span class="sub">The biggest unknown by far. So far the largest file we've run is 19 rows. Real files are far bigger, and we don't yet know how the system behaves at that size.</span></span></li>
+    <li><span class="mark m-next">2</span><span><b>Automatic testing on every change</b><span class="sub">Right now the 205 tests are run by hand. They should run themselves on every push.</span></span></li>
+    <li><span class="mark m-next">3</span><span><b>Lock down the API</b><span class="sub">It currently has no login. Fine on a laptop, not fine anywhere else.</span></span></li>
+    <li><span class="mark m-next">4</span><span><b>Alerts</b><span class="sub">The dashboards show problems, but nobody gets told. Needs to actually notify someone.</span></span></li>
+    <li><span class="mark m-next">5</span><span><b>Close four known gaps</b><span class="sub">Small things we already documented as imperfect while building — nothing surprising, all written down.</span></span></li>
+    <li><span class="mark m-next">6</span><span><b>Backups and a written handover</b><span class="sub">How to restore, how to re-run a file, what to do when something gets stuck.</span></span></li>
+    <li><span class="mark m-next">7</span><span><b>Test real Excel files</b><span class="sub">The code supports Excel but we've never actually run a real workbook through it.</span></span></li>
+    <li><span class="mark m-next">8</span><span><b>Security review</b><span class="sub">Passwords are currently in a config file. Needs proper handling before anything goes live.</span></span></li>
+    <li><span class="mark m-next">9</span><span><b>Final testing with real data and sign-off</b><span class="sub">Run genuine vendor files end to end and confirm the results are right.</span></span></li>
+  </ul>
+
+  <div class="callout">
+    <p><b>The one thing that could change the timeline:</b> we've only ever tested with tiny files
+      — the biggest was 19 rows. Everything else on the list is predictable work.</p>
+    <p>If the real files turn out to be moderate in size, we finish about a week early. If they're
+      very large, some of the processing needs reworking and we lose one to two weeks. We'll know
+      within the first two weeks, which is why that test comes first.</p>
+  </div>
+
+  <h2>Rough timeline</h2>
+  <p class="note">About <b>9 weeks</b> with one person, or <b>5–6 weeks</b> with two — several of these
+    can run side by side.</p>
+  <div class="weeks">
+    <div class="wk flag"><span class="when">Weeks 1–2</span><span class="what"><b>Real-size testing</b><span>Answers the big unknown. → <em>Checkpoint 1</em></span></span></div>
+    <div class="wk"><span class="when">Week 3</span><span class="what"><b>Buffer + Excel testing</b><span>Deliberate slack, because week 1–2 is where surprises live.</span></span></div>
+    <div class="wk flag"><span class="when">Week 4</span><span class="what"><b>API security + automatic testing</b><span>→ <em>Checkpoint 2</em></span></span></div>
+    <div class="wk flag"><span class="when">Weeks 5–6</span><span class="what"><b>Close the known gaps</b><span>→ <em>Checkpoint 3</em></span></span></div>
+    <div class="wk flag"><span class="when">Weeks 7–8</span><span class="what"><b>Backups, alerts, security review</b><span>→ <em>Checkpoint 4</em></span></span></div>
+    <div class="wk flag"><span class="when">Week 9</span><span class="what"><b>Final testing and sign-off</b><span>→ <em>Ready to go live</em></span></span></div>
+  </div>
+
+  <h2>Three things I need from you</h2>
+  <ol class="q">
+    <li><b>How big are the real vendor files?</b>
+      <span>Roughly how many rows — thousands, hundreds of thousands, millions? This single number decides whether week 1–2 is easy or hard, and it's the biggest lever on the whole timeline.</span></li>
+    <li><b>Does this run on one server, or does it need to survive a machine failing?</b>
+      <span>It's currently built for a single machine, which matches the original brief. Making it survive hardware failure is a real piece of extra work — worth deciding now rather than in week 7.</span></li>
+    <li><b>Who else will run this besides me?</b>
+      <span>It changes how much handover documentation we need, and right now everything lives with one person.</span></li>
+  </ol>
+
+  <footer>Status as of the latest commit · Detailed version: docs/delivery-timeline.html</footer>
+
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('themeToggle');
+    var label = document.getElementById('themeLabel');
+    function systemDark() { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
+    function isDark() {
+      var s = root.getAttribute('data-theme');
+      if (s === 'dark') return true;
+      if (s === 'light') return false;
+      return systemDark();
+    }
+    function sync() { label.textContent = isDark() ? 'Light' : 'Dark'; }
+    try {
+      var saved = localStorage.getItem('pcdf-status-theme');
+      if (saved === 'dark' || saved === 'light') root.setAttribute('data-theme', saved);
+    } catch (e) {}
+    sync();
+    btn.addEventListener('click', function () {
+      var next = isDark() ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('pcdf-status-theme', next); } catch (e) {}
+      sync();
+    });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', sync);
+  })();
+</script>
+</body>
+</html>

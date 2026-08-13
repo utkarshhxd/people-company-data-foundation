@@ -5,6 +5,7 @@ data/inbox/*
 !data/inbox/collision_people.csv
 !data/inbox/invalid_company.csv
 !data/inbox/ambiguous_company.csv
+!data/inbox/near_match_company.csv
 .venv/
 __pycache__/
 *.pyc
@@ -17,3 +18,4 @@ dist/
 .vscode/
 Thumbs.db
 .DS_Store
+*.vsix

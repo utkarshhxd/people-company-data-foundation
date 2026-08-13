@@ -12,6 +12,7 @@ TOPIC_BATCH_INGESTED = "pcdf.batch.ingested"
 TOPIC_SCHEMA_MAPPED = "pcdf.schema.mapped"
 TOPIC_RECORDS_NORMALIZED = "pcdf.records.normalized"
 TOPIC_RECORDS_VALIDATED = "pcdf.records.validated"
+TOPIC_ENTITIES_RESOLVED = "pcdf.entities.resolved"
 
 ALL_TOPICS = (
     TOPIC_RAW_RECORD_INGESTED,
@@ -19,6 +20,7 @@ ALL_TOPICS = (
     TOPIC_SCHEMA_MAPPED,
     TOPIC_RECORDS_NORMALIZED,
     TOPIC_RECORDS_VALIDATED,
+    TOPIC_ENTITIES_RESOLVED,
 )
 
 EVENT_VERSION = 1
@@ -93,6 +95,32 @@ def records_validated(
         "counts": counts,
         "ruleset_version": ruleset_version,
         "validated_at": _isoformat(validated_at),
+    }
+
+
+def entities_resolved(
+    batch_id: str,
+    source_id: str,
+    entity_type: str,
+    records: int,
+    linked: int,
+    created: int,
+    candidates: int,
+    counts: dict[str, int],
+    resolved_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "event_type": "entities.resolved",
+        "event_version": EVENT_VERSION,
+        "batch_id": batch_id,
+        "source_id": source_id,
+        "entity_type": entity_type,
+        "records": records,
+        "linked": linked,
+        "created": created,
+        "candidates": candidates,
+        "counts": counts,
+        "resolved_at": _isoformat(resolved_at),
     }
 
 

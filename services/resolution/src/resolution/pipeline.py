@@ -1,0 +1,199 @@
+"""Resolve a batch's records to real-world entities.
+
+Records are processed in file order and committed one at a time, so a record can
+match an entity created by the record two rows above it. That determinism is
+worth more here than throughput: the same file must always produce the same
+entities, or nothing downstream can be reproduced.
+"""
+
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+
+from common.db import connect
+
+from resolution import repository
+from resolution.keys import IdentityKey, keys_for
+from resolution.scoring import (
+    DECISION_LINK,
+    DECISION_NEW,
+    DECISION_REVIEW,
+    decide,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class BatchNotResolvable(Exception):
+    pass
+
+
+@dataclass
+class ResolveResult:
+    batch_id: str
+    records: int
+    linked: int
+    created: int
+    candidates: int
+    skipped: int
+    counts: dict[str, int]
+
+
+def resolve_record(conn, record, batch, batch_id: str) -> str:
+    """Resolve one record. Returns the decision taken."""
+    record_id = str(record["record_id"])
+    entity_type = batch["entity_type"]
+    source_id = str(batch["source_id"])
+
+    values = repository.record_values(conn, record_id)
+    keys = keys_for(
+        entity_type, values, source_id,
+        role_email=repository.has_role_email(conn, record_id),
+    )
+    if not keys:
+        # Validation guarantees a resolvable record has an identifying
+        # attribute, so this means the identifier is in a field we cannot build
+        # a key from. Recording it as its own entity is honest; silently
+        # dropping it would not be.
+        entity_id = repository.create_entity(conn, entity_type, record_id)
+        repository.link_record(
+            conn, record_id, entity_id, entity_type, batch_id, source_id,
+            "no_identity_keys", 0.0, "new_entity",
+            {"reason": "no identity key could be built from the confirmed fields"},
+        )
+        return DECISION_NEW
+
+    rows = repository.find_candidates(
+        conn, entity_type, [(k.key_type, k.key_value) for k in keys]
+    )
+    overlaps: dict[str, list[IdentityKey]] = defaultdict(list)
+    for row in rows:
+        overlaps[str(row["entity_id"])].append(
+            IdentityKey(row["key_type"], row["key_value"], row["strength"])
+        )
+
+    decision = decide(entity_type, dict(overlaps))
+    evidence = {
+        "keys_built": [{"key_type": k.key_type, "strength": k.strength} for k in keys],
+        "candidates_considered": [
+            {"entity_id": m.entity_id, "confidence": m.confidence, "method": m.method}
+            for m in decision.considered
+        ],
+    }
+
+    if decision.decision == DECISION_LINK:
+        match = decision.match
+        repository.link_record(
+            conn, record_id, match.entity_id, entity_type, batch_id, source_id,
+            match.method, match.confidence, "auto_linked",
+            {**evidence, **match.evidence},
+        )
+        # The record's own keys join the entity, so the next vendor's spelling
+        # of the same organisation still finds it.
+        repository.add_keys(conn, match.entity_id, entity_type, record_id, keys)
+        return DECISION_LINK
+
+    # Below the auto-link line the record still becomes an entity of its own.
+    # Blocking the pipeline on a human would stall every downstream stage, and
+    # inventing the merge is exactly what the spec forbids.
+    entity_id = repository.create_entity(conn, entity_type, record_id)
+    repository.link_record(
+        conn, record_id, entity_id, entity_type, batch_id, source_id,
+        decision.match.method if decision.match else "no_match",
+        decision.match.confidence if decision.match else 0.0,
+        "new_entity", evidence,
+    )
+    repository.add_keys(conn, entity_id, entity_type, record_id, keys)
+
+    if decision.decision == DECISION_REVIEW:
+        match = decision.match
+        repository.record_candidate(
+            conn, record_id, match.entity_id, entity_type,
+            match.method, match.confidence, {**evidence, **match.evidence},
+        )
+        return DECISION_REVIEW
+    return DECISION_NEW
+
+
+def resolve_batch(batch_id: str) -> ResolveResult:
+    with connect() as conn:
+        batch = repository.get_batch(conn, batch_id)
+        if batch is None:
+            raise BatchNotResolvable(f"batch {batch_id} not found")
+        if batch["status"] != "completed":
+            raise BatchNotResolvable(
+                f"batch {batch_id} has status {batch['status']!r}, expected 'completed'"
+            )
+
+        records = repository.resolvable_records(conn, batch_id)
+        if not records:
+            raise BatchNotResolvable(
+                f"batch {batch_id} has no unresolved records that passed validation; "
+                "validate it first, or release its quarantined records"
+            )
+
+        linked = created = candidates = 0
+        for record in records:
+            outcome = resolve_record(conn, record, batch, batch_id)
+            if outcome == DECISION_LINK:
+                linked += 1
+            else:
+                created += 1
+                if outcome == DECISION_REVIEW:
+                    candidates += 1
+            # Per record, so the next one can match what this one just created.
+            conn.commit()
+
+        counts = repository.resolution_counts(conn, batch_id)
+        logger.info(
+            "batch %s resolved: %d record(s), %d linked, %d new entities, "
+            "%d awaiting review %s",
+            batch_id, len(records), linked, created, candidates, counts,
+        )
+        return ResolveResult(
+            batch_id, len(records), linked, created, candidates, 0, counts
+        )
+
+
+def accept_candidate(candidate_id: str, actor: str, note: str | None) -> dict:
+    """Accept a proposed match: merge the record's entity into the candidate's."""
+    with connect() as conn:
+        candidate = repository.get_candidate(conn, candidate_id)
+        if candidate is None:
+            raise BatchNotResolvable(f"candidate {candidate_id} not found")
+        if candidate["status"] != "open":
+            raise BatchNotResolvable(
+                f"candidate is already {candidate['status']}"
+            )
+
+        surviving = repository.resolve_entity_id(conn, str(candidate["entity_id"]))
+        merged = repository.resolve_entity_id(conn, str(candidate["record_entity_id"]))
+        if surviving is None or merged is None:
+            raise BatchNotResolvable("one of the entities no longer exists")
+        if surviving == merged:
+            # Another accepted candidate already merged them. Closing the
+            # candidate is still right; merging again would not be.
+            repository.close_candidate(conn, candidate_id, "accepted", actor, note)
+            conn.commit()
+            return {"already_merged": True, "entity_id": surviving}
+
+        moved = repository.merge_entities(
+            conn, merged, surviving, candidate["entity_type"], actor, note,
+            float(candidate["match_confidence"]),
+        )
+        repository.close_candidate(conn, candidate_id, "accepted", actor, note)
+        conn.commit()
+        return {"merged_entity_id": merged, "surviving_entity_id": surviving, **moved}
+
+
+def reject_candidate(candidate_id: str, actor: str, note: str | None) -> None:
+    """Reject a proposed match. Both entities stay separate, which is the whole
+    point of not having merged them automatically."""
+    with connect() as conn:
+        candidate = repository.get_candidate(conn, candidate_id)
+        if candidate is None:
+            raise BatchNotResolvable(f"candidate {candidate_id} not found")
+        if candidate["status"] != "open":
+            raise BatchNotResolvable(f"candidate is already {candidate['status']}")
+        repository.close_candidate(conn, candidate_id, "rejected", actor, note)
+        conn.commit()

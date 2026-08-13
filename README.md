@@ -21,9 +21,13 @@ This repository is being built incrementally.
 - **Increment 5** — validation: judge whether each observed value is usable as
   the field it was mapped to, and whether the record could ever be resolved to
   an entity. (`docs/decisions/0005-increment-5-validation.md`)
-- **Increment 6** (this state) — quarantine: hold invalid records back from
-  entity resolution without losing them, with a human review path in and out.
+- **Increment 6** — quarantine: hold invalid records back from entity
+  resolution without losing them, with a human review path in and out.
   (`docs/decisions/0006-increment-6-quarantine.md`)
+- **Increment 7** (this state) — entity resolution: assign a stable
+  `person_id` / `company_id`, link records from different vendors to the same
+  real-world entity, and merge without ever destroying an id.
+  (`docs/decisions/0007-increment-7-entity-resolution.md`)
 
 ## Repository layout
 
@@ -37,7 +41,8 @@ services/api/            # FastAPI service with health checks
 services/ingestion/      # CSV/Excel ingestion CLI
 services/mapping/        # schema-mapping consumer + map-schema/review CLIs
 services/normalization/  # normalization consumer + normalize CLI
-services/validation/     # validation consumer + validate CLI
+services/validation/     # validation consumer + validate/quarantine CLIs
+services/resolution/     # entity-resolution consumer + resolve CLI
 data/inbox/              # local drop dir, bind-mounted into the ingestion container
 ```
 
@@ -276,6 +281,74 @@ release followed by a re-quarantine never erases who signed off.
 the records have no identifier and are quarantined — approve one mapping,
 re-normalize, re-validate, and they close themselves as `resolved`.
 
+## Entity resolution
+
+The point of everything above: records become observations *of* a stable
+`person_id` / `company_id` that survives the attributes changing, the vendor
+changing, and the record being superseded.
+
+```powershell
+# Automatic on records.validated; this re-runs a batch (e.g. after releasing
+# a record from quarantine, which does not itself re-trigger resolution)
+docker compose run --rm resolution resolve run --batch-id <id>
+
+# Everything known about an entity, and which vendor said it
+docker compose run --rm resolution resolve show --entity-id <id>
+
+# Matches that were NOT acted on automatically
+docker compose run --rm resolution resolve candidates
+docker compose run --rm resolution resolve accept --candidate-id <id> `
+  --reviewed-by you --note "same organisation"
+docker compose run --rm resolution resolve reject --candidate-id <id> `
+  --reviewed-by you --note "different companies, shared switchboard"
+```
+
+**Strong keys can link on their own; moderate keys never can.** Email, website
+domain, LinkedIn handle and the vendor's own id are strong. Name, name+city and
+phone are moderate — and no amount of moderate agreement crosses the auto-link
+line, because three colleagues share an employer, a city and a switchboard.
+Corroboration adds +0.04 per additional key *type*, capped, so weak signals
+never impersonate a strong one.
+
+Two more rules worth knowing:
+
+- A vendor's own id is scoped as `{source_id}:{external_id}` — authoritative
+  inside one feed, meaningless across feeds that reuse the same integers.
+- A role mailbox (`info@`) is demoted for person matching, reusing validation's
+  stored `email.role_account` verdict rather than re-deciding what a role
+  account is.
+
+Below the threshold the record still gets its own entity and a `match_candidate`
+is filed, so the pipeline never blocks on a human and no merge is invented.
+**Merging never deletes an id** — the absorbed entity becomes a tombstone
+pointing at the survivor, so any id already handed out still resolves.
+
+Resolution reads the `resolvable_record` view, so quarantined records are never
+offered for matching.
+
+### Worked example
+
+`vendor_b_overlap.csv` linked 2 of 2 records to existing entities and created
+none. The Asia Foundation is now one entity observed by three vendors — matched
+on **website domain despite the names disagreeing** ("Asia Foundation" vs "The
+Asia Foundation"), which a name-based match would have missed:
+
+```
+observed by 3 record(s):
+  vendor_dc    real_company_sample.csv   first sighting
+  vendor_b     vendor_b_overlap.csv      website_domain  0.960 (auto_linked)
+  vendor_near  near_match_company.csv    name_city       0.840 (human accepted)
+
+company_name   vendor_b  The Asia Foundation
+               vendor_dc Asia Foundation
+employee_count vendor_b  1200
+sic_description vendor_dc Associations
+...
+```
+
+Every value is still attributed to the vendor that reported it, and nothing was
+overwritten.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -287,12 +360,14 @@ docker compose run --rm ingestion python -m pytest tests -v
 docker compose run --rm mapping python -m pytest tests -v
 docker compose run --rm normalization python -m pytest tests -v
 docker compose run --rm validation python -m pytest tests -v
+docker compose run --rm resolution python -m pytest tests -v
 ```
 
 ## Future increments
 
-Entity resolution, golden records, and history/provenance land as new
-`services/*` and `libs/common/` modules — this layout accommodates them without
-restructuring. Entity resolution is next, and it must read `resolvable_record`
-rather than `raw_record`; it is also the step that finally assigns the stable
-`person_id` / `company_id` that everything so far has been building toward.
+Golden records and history/provenance land as new `services/*` and
+`libs/common/` modules — this layout accommodates them without restructuring.
+The golden record is next: entities deliberately hold no attributes, so deciding
+*which* of three reported names is the name is still an open question. It reads
+the `entity_observation` view, which already exposes every value with its source
+and that source's reliability.

@@ -31,9 +31,12 @@ This repository is being built incrementally.
 - **Increment 8** — golden record: decide the single trusted value per entity
   per field, with the deciding rule, the rejected alternatives, and full
   history. (`docs/decisions/0008-increment-8-golden-record.md`)
-- **Increment 9** (this state) — provenance and the read API: trace any trusted
-  value back to the source cell it came from, and serve it over HTTP.
+- **Increment 9** — provenance and the read API: trace any trusted value back to
+  the source cell it came from, and serve it over HTTP.
   (`docs/decisions/0009-increment-9-provenance-api.md`)
+- **Increment 10** (this state) — pipeline metrics: make the quiet failure modes
+  visible — review backlogs, contested values, and how long the oldest item has
+  been waiting. (`docs/decisions/0010-increment-10-pipeline-metrics.md`)
 
 ## Repository layout
 
@@ -478,6 +481,44 @@ Interactive docs at http://localhost:8000/docs.
 > The API is **unauthenticated**. It is local-first and read-only, but anything
 > beyond a laptop needs auth before exposure.
 
+## Metrics and dashboards
+
+The **Data Foundation** dashboard in Grafana (http://localhost:3000) watches the
+failure modes that are otherwise silent — the ones where every container stays
+green while the data quietly degrades:
+
+- a quarantined record loses nothing by waiting, and nothing ages the queue
+- an unreviewed mapping means values are captured but attributed to no field,
+  so they are never validated or resolved on
+- an open match candidate means one real entity is represented by two ids
+
+```powershell
+curl.exe -s http://localhost:8000/metrics | Select-String "^pcdf_"
+```
+
+```
+pcdf_quarantine_items{status="open"} 3.0
+pcdf_oldest_open_quarantine_age_seconds 60523.33
+pcdf_column_mappings{status="needs_review"} 2.0
+pcdf_records_validated{status="invalid"} 5.0
+pcdf_entities{entity_type="company",status="active"} 18.0
+pcdf_golden_contested_values 9.0
+pcdf_golden_mean_confidence{entity_type="company"} 0.667
+```
+
+These are **gauges queried from Postgres at scrape time**, not counters
+incremented in each service. Queue depth is an accumulated-state question, and
+an in-process counter answers it badly: it resets on restart and double-counts
+after a Kafka replay. Results are cached 12s against a 15s scrape interval.
+
+**The age metrics are the ones to alert on.** A count of 3 is fine; a count of 3
+that has been 3 for a fortnight is a process failure, and no count alone reveals
+that.
+
+If Postgres is unreachable the endpoint still returns 200 with
+`pcdf_metrics_up 0` and no stale gauges — monitoring that dies with the database
+is useless exactly when it is needed.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -502,10 +543,11 @@ The pipeline is end to end: a messy CSV lands in `data/inbox/` and becomes a
 trusted, provenanced, versioned canonical record with no manual step. What is
 still open:
 
-- **Metrics and dashboards** — Grafana is provisioned but the pipeline emits no
-  business metrics (quarantine depth, open match candidates, contested golden
-  fields, mapping review backlog).
+- **Alert rules** — the dashboard makes the numbers visible, but nothing pages
+  anyone. Choosing thresholds is a judgement about how this gets operated.
 - **Re-blocking** — two entities that should have merged stay separate until a
   third record matches both. Nothing re-examines old entities when new keys
   arrive.
 - **API authentication** — the read API is open. Fine locally, not beyond.
+- **Excel ingestion at scale** — readers support it, but no large `.xlsx` has
+  been run through the pipeline.

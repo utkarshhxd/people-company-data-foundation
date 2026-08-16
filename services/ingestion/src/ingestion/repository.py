@@ -146,6 +146,37 @@ def insert_raw_records(
     return inserted
 
 
+_INSERT_RAW_RECORD = """
+INSERT INTO raw_record (record_id, batch_id, source_id, entity_type,
+                        source_record_id, row_number, payload_hash, raw_payload)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def insert_raw_record(
+    conn: psycopg.Connection,
+    record_id: str,
+    batch_id: str,
+    source_id: str,
+    entity_type: str,
+    source_record_id: str,
+    row_number: int,
+    payload: dict[str, Any],
+) -> None:
+    """Insert one record with an id the caller chose.
+
+    No transaction of its own: the record-at-a-time pipeline writes this row and
+    everything derived from it inside a single transaction, so opening one here
+    would split a record's write in two.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            _INSERT_RAW_RECORD,
+            (record_id, batch_id, source_id, entity_type, source_record_id,
+             row_number, payload_hash(payload), Json(payload)),
+        )
+
+
 def finish_batch(
     conn: psycopg.Connection, batch_id: str, rows_read: int, rows_ingested: int, rows_skipped: int
 ) -> None:

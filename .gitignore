@@ -1,4 +1,10 @@
 .env
+
+# Real vendor exports used to exercise the pipeline at production scale.
+# Never committed: they are ~184 MB and contain real personal data (consumer
+# names, home addresses, phone numbers, email addresses, IP addresses).
+testfiles/
+
 # Local ingestion drop dir: real data stays out of git, sample files are kept.
 data/inbox/*
 !data/inbox/messy_people.csv
@@ -7,6 +13,15 @@ data/inbox/*
 !data/inbox/ambiguous_company.csv
 !data/inbox/near_match_company.csv
 !data/inbox/vendor_c_update.csv
+
+# Measurement and maintenance scripts. They live in data/inbox because that is
+# the directory bind-mounted into the containers, which is where they have to
+# run — the native Python extensions this project depends on cannot be loaded
+# outside Docker on the development machine.
+!data/inbox/_parity.py
+!data/inbox/_bench_perrecord.py
+!data/inbox/_gen20k.py
+!data/inbox/_purge_source.py
 .venv/
 __pycache__/
 *.pyc

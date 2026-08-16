@@ -107,8 +107,27 @@ def find_candidates(
 
 
 def create_entity(
-    conn: psycopg.Connection, entity_type: str, first_record_id: str
+    conn: psycopg.Connection, entity_type: str, first_record_id: str,
+    entity_id: str | None = None,
 ) -> str:
+    """Create an entity, optionally with an id the caller already chose.
+
+    Supplying the id avoids waiting for RETURNING to come back, which is what
+    lets the record-at-a-time pipeline send a record's whole write in one
+    flush. Either way the id is a UUIDv7 — the column default and
+    common.ids.uuid7 produce the same thing.
+    """
+    if entity_id is not None:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO entity (entity_id, entity_type, first_seen_record_id)
+                VALUES (%s, %s, %s)
+                """,
+                (entity_id, entity_type, first_record_id),
+            )
+        return entity_id
+
     with conn.cursor() as cur:
         cur.execute(
             """

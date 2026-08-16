@@ -1,0 +1,43 @@
+[project]
+name = "record-pipeline-service"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "confluent-kafka>=2.6",
+    "common",
+    # The per-record path does not reimplement any stage: it composes the same
+    # functions the batch services expose, so the two can never disagree about
+    # what a record means.
+    "ingestion-service",
+    "mapping-service",
+    "normalization-service",
+    "validation-service",
+    "resolution-service",
+    "golden-service",
+]
+
+[project.scripts]
+process = "record_pipeline.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.7",
+]
+
+[tool.uv.sources]
+common = { workspace = true }
+ingestion-service = { workspace = true }
+mapping-service = { workspace = true }
+normalization-service = { workspace = true }
+validation-service = { workspace = true }
+resolution-service = { workspace = true }
+golden-service = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/record_pipeline"]

@@ -154,6 +154,34 @@ services:
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["ingest", "--help"]
 
+  # Record-at-a-time path: carries one record from raw row to golden value
+  # before starting the next. Composes the same stage logic the services below
+  # run batch-wise, so the two cannot disagree about what a record means.
+  #   docker compose run --rm pipeline process run /data/inbox/file.csv ...
+  pipeline:
+    build:
+      context: .
+      dockerfile: services/pipeline/Dockerfile
+    profiles: ["cli"]
+    networks: [local-net]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    entrypoint: ["uv", "run", "--frozen", "--no-sync"]
+    command: ["process", "--help"]
+
   # Long-running consumer of batch.ingested. Also the image used for the
   # map-schema / review-mappings CLIs via `docker compose run --rm mapping ...`.
   mapping:

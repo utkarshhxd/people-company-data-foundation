@@ -56,8 +56,23 @@ services/normalization/  # normalization consumer + normalize CLI
 services/validation/     # validation consumer + validate/quarantine CLIs
 services/resolution/     # entity-resolution consumer + resolve CLI
 services/golden/         # golden-record consumer + golden CLI
+services/pipeline/       # record-at-a-time path: one record, end to end
 data/inbox/              # local drop dir, bind-mounted into the ingestion container
 ```
+
+There are two ways a record can be processed, and they run the same stage logic:
+
+- **`services/pipeline`** takes one record the whole way through — normalize,
+  validate, quarantine, resolve, golden — before starting the next. This is the
+  path for loading a file. See [Processing a file](#processing-a-file-record-at-a-time).
+- **The stage services** each run one stage across a whole batch, triggered by
+  Kafka. This is the path for *reprocessing* records already in Postgres — for
+  example re-validating everything after a `RULESET_VERSION` bump, which never
+  touches the source file.
+
+Neither reimplements the other: both call the same functions, so they cannot
+disagree about what a record means. That is verified rather than asserted — see
+`data/inbox/_parity.py` and [ADR 0012](docs/decisions/0012-record-at-a-time-processing.md).
 
 ## Prerequisites
 
@@ -103,10 +118,72 @@ Open http://localhost:3000 (credentials from `.env`) and check
 Connections > Data sources > Prometheus > "Save & test", and the
 "Service Health" dashboard under Dashboards.
 
-## Ingesting a file
+## Processing a file, record at a time
 
 Migrations are applied automatically by the `migrate` service on
-`docker compose up`. To ingest:
+`docker compose up`. To load a file:
+
+```powershell
+docker compose run --rm pipeline process run /data/inbox/messy_people.csv `
+  --entity-type person --source-name vendor_x
+```
+
+Each record is normalized, validated, quarantined or resolved to an entity, and
+its entity's golden values rebuilt, before the next record starts. When a record
+finishes, everything derived from it is current — which is what makes it safe to
+hand to another system immediately. One `pcdf.record.processed` event is emitted
+per record, carrying references and status, never values.
+
+```
+batch 01a0008a-37ac-7382-911e-611922218553
+  read       10
+  processed   8
+  failed      2
+  invalid     0 (quarantined 0)
+  linked      3
+  new         5
+  review      0
+  mapping    reused
+```
+
+**A record that cannot be processed fails alone.** It is rolled back, written to
+`record_error` with its payload and its error, and the run continues — one bad
+row costs one row, not the file. The run still exits non-zero, because a
+scheduled load that quietly drops rows is how data goes missing unnoticed.
+
+Rows carrying a byte the database cannot store — a NUL, an unpaired surrogate —
+are screened out before the write is attempted and recorded under stage
+`screen`, naming the offending column. The screen only refuses what Postgres
+certainly refuses; anything it misses is still caught by the write, because a
+row wrongly let through costs a round-trip while a row wrongly rejected would
+leave the entity graph with nothing to say so.
+
+```powershell
+# What could not be processed, and why
+docker compose run --rm pipeline process errors
+
+# Release a batch left 'running' by a process that died. Only ever marks it
+# failed; the rows it already wrote stay exactly where they are.
+docker compose run --rm pipeline process abandon <batch-id>
+```
+
+Useful flags: `--record-id-column <col>` for a natural key instead of the row
+number, `--reliability 0.8` to record how much this source is trusted,
+`--allow-reingest` to deliberately process a file already seen, `--read-ahead N`
+for how many rows are pulled off disk per read (buffering only — records are
+still processed one at a time), `--no-golden` to skip rebuilding each record's
+entity as it lands, `--fail-fast` to stop at the first record that throws, and
+`--async-commit` to defer the commit fsync (~1.7x faster; a crash can lose
+recently committed records, which leaves the batch un-completed and therefore
+ignored downstream — recovery is re-running the file).
+
+Measured on 20,000 records, and against the batch path on an identical file, in
+[ADR 0012](docs/decisions/0012-record-at-a-time-processing.md).
+
+## Ingesting a file (batch path)
+
+The stage-by-stage path is still how *reprocessing* works, and `ingest` is its
+entry point:
 
 ```powershell
 docker compose run --rm ingestion ingest /data/inbox/messy_people.csv `

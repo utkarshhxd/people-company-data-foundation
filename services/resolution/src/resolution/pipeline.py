@@ -39,30 +39,8 @@ class ResolveResult:
     counts: dict[str, int]
 
 
-def resolve_record(conn, record, batch, batch_id: str) -> str:
-    """Resolve one record. Returns the decision taken."""
-    record_id = str(record["record_id"])
-    entity_type = batch["entity_type"]
-    source_id = str(batch["source_id"])
-
-    values = repository.record_values(conn, record_id)
-    keys = keys_for(
-        entity_type, values, source_id,
-        role_email=repository.has_role_email(conn, record_id),
-    )
-    if not keys:
-        # Validation guarantees a resolvable record has an identifying
-        # attribute, so this means the identifier is in a field we cannot build
-        # a key from. Recording it as its own entity is honest; silently
-        # dropping it would not be.
-        entity_id = repository.create_entity(conn, entity_type, record_id)
-        repository.link_record(
-            conn, record_id, entity_id, entity_type, batch_id, source_id,
-            "no_identity_keys", 0.0, "new_entity",
-            {"reason": "no identity key could be built from the confirmed fields"},
-        )
-        return DECISION_NEW
-
+def candidates_for(conn, entity_type: str, keys: list[IdentityKey]):
+    """Look up the entities these keys already point at, grouped per entity."""
     rows = repository.find_candidates(
         conn, entity_type, [(k.key_type, k.key_value) for k in keys]
     )
@@ -71,8 +49,37 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
         overlaps[str(row["entity_id"])].append(
             IdentityKey(row["key_type"], row["key_value"], row["strength"])
         )
+    return decide(entity_type, dict(overlaps))
 
-    decision = decide(entity_type, dict(overlaps))
+
+def apply_decision(
+    conn, record_id: str, entity_type: str, batch_id: str, source_id: str,
+    keys: list[IdentityKey], decision, new_entity_id: str | None = None,
+) -> tuple[str, str]:
+    """Write the consequences of a match decision. Returns (decision, entity_id).
+
+    Separated from the lookups above so the record-at-a-time pipeline can supply
+    values it already holds in memory without either path reimplementing what a
+    decision *means*. `decision` is None when no identity key could be built.
+
+    `new_entity_id` lets a caller supply the id instead of taking it from a
+    RETURNING round-trip; the id is a UUIDv7 either way.
+    """
+    if decision is None:
+        # Validation guarantees a resolvable record has an identifying
+        # attribute, so this means the identifier is in a field we cannot build
+        # a key from. Recording it as its own entity is honest; silently
+        # dropping it would not be.
+        entity_id = repository.create_entity(
+            conn, entity_type, record_id, entity_id=new_entity_id
+        )
+        repository.link_record(
+            conn, record_id, entity_id, entity_type, batch_id, source_id,
+            "no_identity_keys", 0.0, "new_entity",
+            {"reason": "no identity key could be built from the confirmed fields"},
+        )
+        return DECISION_NEW, entity_id
+
     evidence = {
         "keys_built": [{"key_type": k.key_type, "strength": k.strength} for k in keys],
         "candidates_considered": [
@@ -91,12 +98,14 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
         # The record's own keys join the entity, so the next vendor's spelling
         # of the same organisation still finds it.
         repository.add_keys(conn, match.entity_id, entity_type, record_id, keys)
-        return DECISION_LINK
+        return DECISION_LINK, match.entity_id
 
     # Below the auto-link line the record still becomes an entity of its own.
     # Blocking the pipeline on a human would stall every downstream stage, and
     # inventing the merge is exactly what the spec forbids.
-    entity_id = repository.create_entity(conn, entity_type, record_id)
+    entity_id = repository.create_entity(
+        conn, entity_type, record_id, entity_id=new_entity_id
+    )
     repository.link_record(
         conn, record_id, entity_id, entity_type, batch_id, source_id,
         decision.match.method if decision.match else "no_match",
@@ -111,8 +120,26 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
             conn, record_id, match.entity_id, entity_type,
             match.method, match.confidence, {**evidence, **match.evidence},
         )
-        return DECISION_REVIEW
-    return DECISION_NEW
+        return DECISION_REVIEW, entity_id
+    return DECISION_NEW, entity_id
+
+
+def resolve_record(conn, record, batch, batch_id: str) -> str:
+    """Resolve one record. Returns the decision taken."""
+    record_id = str(record["record_id"])
+    entity_type = batch["entity_type"]
+    source_id = str(batch["source_id"])
+
+    values = repository.record_values(conn, record_id)
+    keys = keys_for(
+        entity_type, values, source_id,
+        role_email=repository.has_role_email(conn, record_id),
+    )
+    decision = candidates_for(conn, entity_type, keys) if keys else None
+    outcome, _ = apply_decision(
+        conn, record_id, entity_type, batch_id, source_id, keys, decision
+    )
+    return outcome
 
 
 def resolve_batch(batch_id: str) -> ResolveResult:

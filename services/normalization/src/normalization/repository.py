@@ -109,6 +109,41 @@ def insert_observations(conn: psycopg.Connection, rows: list[tuple]) -> int:
     return len(rows)
 
 
+def insert_observations_with_ids(conn: psycopg.Connection, rows: list[tuple]) -> int:
+    """Same insert, but the caller supplies observation_id as the first column.
+
+    Exists because validation results reference observations. When the ids come
+    from the server, a record's validation cannot be written until its
+    observations have come back — so the record-at-a-time pipeline chooses the
+    ids itself and sends both together. The conflict clause is deliberately
+    identical to insert_observations: raw_value and observed_at are what the
+    source said and are never updated; everything derived is refreshable.
+    """
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO attribute_observation (
+                observation_id, record_id, batch_id, source_id, entity_type,
+                source_column, canonical_field, mapping_status, value_index,
+                raw_value, normalized_value, value_type, normalization_method,
+                is_null_token, observed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (record_id, source_column, value_index) DO UPDATE SET
+                canonical_field      = EXCLUDED.canonical_field,
+                mapping_status       = EXCLUDED.mapping_status,
+                normalized_value     = EXCLUDED.normalized_value,
+                value_type           = EXCLUDED.value_type,
+                normalization_method = EXCLUDED.normalization_method,
+                is_null_token        = EXCLUDED.is_null_token
+            """,
+            rows,
+        )
+    return len(rows)
+
+
 def observation_counts(conn: psycopg.Connection, batch_id: str) -> dict[str, int]:
     with conn.cursor() as cur:
         cur.execute(

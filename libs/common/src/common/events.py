@@ -14,6 +14,7 @@ TOPIC_RECORDS_NORMALIZED = "pcdf.records.normalized"
 TOPIC_RECORDS_VALIDATED = "pcdf.records.validated"
 TOPIC_ENTITIES_RESOLVED = "pcdf.entities.resolved"
 TOPIC_GOLDEN_UPDATED = "pcdf.golden.updated"
+TOPIC_RECORD_PROCESSED = "pcdf.record.processed"
 
 ALL_TOPICS = (
     TOPIC_RAW_RECORD_INGESTED,
@@ -23,6 +24,7 @@ ALL_TOPICS = (
     TOPIC_RECORDS_VALIDATED,
     TOPIC_ENTITIES_RESOLVED,
     TOPIC_GOLDEN_UPDATED,
+    TOPIC_RECORD_PROCESSED,
 )
 
 EVENT_VERSION = 1
@@ -172,6 +174,44 @@ def schema_mapped(
         "counts": counts,
         "schema_version": schema_version,
         "mapped_at": _isoformat(mapped_at),
+    }
+
+
+def record_processed(
+    record_id: str,
+    batch_id: str,
+    source_id: str,
+    entity_type: str,
+    entity_id: str | None,
+    validation_status: str,
+    quarantined: bool,
+    match_decision: str | None,
+    processed_at: datetime,
+) -> dict[str, Any]:
+    """One record finished every stage.
+
+    Emitted per record because the record-at-a-time pipeline finishes records
+    one at a time, and a consumer feeding another system wants each one as it
+    becomes ready rather than waiting for the file.
+
+    Still references only. The record's values are not here: a consumer reads
+    them from Postgres or the API, so there is exactly one place where what we
+    know about a record can be found, and an event can never go stale against
+    it. The status fields are included because they decide whether a consumer
+    should fetch at all — that is routing, not payload.
+    """
+    return {
+        "event_type": "record.processed",
+        "event_version": EVENT_VERSION,
+        "record_id": record_id,
+        "batch_id": batch_id,
+        "source_id": source_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "validation_status": validation_status,
+        "quarantined": quarantined,
+        "match_decision": match_decision,
+        "processed_at": _isoformat(processed_at),
     }
 
 

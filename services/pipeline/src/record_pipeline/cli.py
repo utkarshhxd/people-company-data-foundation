@@ -1,0 +1,204 @@
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+from common.db import connect
+from ingestion import repository as ingest_repo
+from ingestion.pipeline import ReingestBlocked
+from ingestion.readers import DEFAULT_BATCH_SIZE, CSV_SUFFIXES, UnsupportedFileType
+
+from record_pipeline import repository
+from record_pipeline.runner import EmptySource, run_file
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="process",
+        description="Process a file one record at a time, all the way to golden values.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run = sub.add_parser("run", help="process a file")
+    run.add_argument("path", type=Path, help="path to the CSV/Excel file")
+    run.add_argument("--entity-type", required=True, choices=["person", "company"])
+    run.add_argument("--source-name", required=True, help="logical feed/vendor name")
+    run.add_argument(
+        "--source-type", choices=["csv", "excel"],
+        help="defaults to being inferred from the file extension",
+    )
+    run.add_argument(
+        "--record-id-column",
+        help="column holding a natural key; defaults to the row number",
+    )
+    run.add_argument(
+        "--reliability", type=float, default=0.5, help="source reliability, 0-1"
+    )
+    run.add_argument(
+        "--read-ahead", type=int, default=DEFAULT_BATCH_SIZE, metavar="N",
+        help=(
+            f"rows pulled off disk per read (default {DEFAULT_BATCH_SIZE}). This is "
+            "buffering only — records are still processed and committed one at a time."
+        ),
+    )
+    run.add_argument(
+        "--no-golden", action="store_true",
+        help=(
+            "skip rebuilding each record's entity as it lands. Faster, but a "
+            "record is not fully current when it finishes, so downstream must "
+            "wait for a separate golden build."
+        ),
+    )
+    run.add_argument(
+        "--no-publish", action="store_true",
+        help="process without emitting a record.processed event per record",
+    )
+    run.add_argument(
+        "--fail-fast", action="store_true",
+        help=(
+            "stop at the first record that throws instead of recording it and "
+            "carrying on. Useful while developing; wrong for a production load, "
+            "where one bad row should cost one row."
+        ),
+    )
+    run.add_argument(
+        "--async-commit", action="store_true",
+        help=(
+            "defer the commit fsync for this run (synchronous_commit=off). Roughly "
+            "1.7x faster. A crash can lose recently committed records, which leaves "
+            "the batch un-completed and therefore ignored downstream; recovery is "
+            "re-running the file."
+        ),
+    )
+    run.add_argument(
+        "--allow-reingest", action="store_true",
+        help="process again even if this exact file was already processed for this source",
+    )
+
+    errors = sub.add_parser("errors", help="list records that could not be processed")
+    errors.add_argument("--batch-id", help="limit to one batch")
+    errors.add_argument("--limit", type=int, default=50)
+
+    abandon = sub.add_parser(
+        "abandon",
+        help="mark a stuck 'running' batch as failed so the file can be processed again",
+    )
+    abandon.add_argument("batch_id")
+    abandon.add_argument(
+        "--reason", default="abandoned by operator",
+        help="why, recorded on the batch",
+    )
+
+    return parser
+
+
+def _run(args) -> int:
+    if not args.path.is_file():
+        print(f"error: {args.path} is not a file", file=sys.stderr)
+        return 2
+    if not 0 <= args.reliability <= 1:
+        print("error: --reliability must be between 0 and 1", file=sys.stderr)
+        return 2
+
+    source_type = args.source_type or (
+        "csv" if args.path.suffix.lower() in CSV_SUFFIXES else "excel"
+    )
+
+    try:
+        result = run_file(
+            path=args.path,
+            entity_type=args.entity_type,
+            source_name=args.source_name,
+            source_type=source_type,
+            reliability=args.reliability,
+            record_id_column=args.record_id_column,
+            allow_reingest=args.allow_reingest,
+            read_ahead=args.read_ahead,
+            build_golden=not args.no_golden,
+            publish=not args.no_publish,
+            fail_fast=args.fail_fast,
+            async_commit=args.async_commit,
+        )
+    except ReingestBlocked as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
+    except (UnsupportedFileType, EmptySource, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"batch {result.batch_id}\n"
+        f"  read       {result.rows_read}\n"
+        f"  processed  {result.processed}\n"
+        f"  failed     {result.failed}\n"
+        f"  invalid    {result.invalid} (quarantined {result.quarantined})\n"
+        f"  linked     {result.linked}\n"
+        f"  new        {result.new_entities}\n"
+        f"  review     {result.review}\n"
+        f"  mapping    {'reused' if result.mapping_reused else 'derived'}"
+    )
+    # A run with failed records succeeded at its job — it processed what it
+    # could and kept the rest. It exits non-zero anyway, because a scheduled
+    # load that quietly drops rows is how data goes missing unnoticed.
+    if result.failed:
+        return 5
+    return 0
+
+
+def _errors(args) -> int:
+    with connect() as conn:
+        rows = repository.list_errors(conn, args.batch_id, args.limit)
+    if not rows:
+        print("no unprocessed records")
+        return 0
+    for row in rows:
+        note = " (payload sanitized for display)" if row["payload_sanitized"] else ""
+        print(
+            f"{row['source_name']}/{row['file_name']} row {row['row_number']} "
+            f"[{row['stage']}] {row['error_type']}: {row['error_message'][:120]}{note}"
+        )
+    print(f"\n{len(rows)} record(s) awaiting attention")
+    return 0
+
+
+def _abandon(args) -> int:
+    """Release a batch left 'running' by a process that died.
+
+    Only ever marks it failed. The rows it already wrote stay exactly where they
+    are: they are what the source said, every downstream stage requires
+    'completed', and deleting them would destroy the only record of a partial
+    load. A re-run creates a new batch alongside it.
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status FROM batch WHERE batch_id = %s", (args.batch_id,)
+            )
+            row = cur.fetchone()
+        if row is None:
+            print(f"error: no batch {args.batch_id}", file=sys.stderr)
+            return 2
+        if row[0] != "running":
+            print(
+                f"error: batch {args.batch_id} is {row[0]!r}, not 'running'; "
+                "nothing to abandon",
+                file=sys.stderr,
+            )
+            return 2
+        ingest_repo.fail_batch(conn, args.batch_id, args.reason)
+    print(f"batch {args.batch_id} marked failed; its rows were left in place")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    if args.command == "run":
+        return _run(args)
+    if args.command == "abandon":
+        return _abandon(args)
+    return _errors(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

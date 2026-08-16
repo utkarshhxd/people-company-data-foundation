@@ -164,3 +164,19 @@ def iter_file(
         raise UnsupportedFileType(
             f"{path.name}: expected one of {sorted(CSV_SUFFIXES | EXCEL_SUFFIXES)}"
         )
+
+
+def iter_rows(
+    path: Path, read_ahead: int = DEFAULT_BATCH_SIZE
+) -> Iterator[tuple[list[str], Row]]:
+    """Yield (columns, row) one row at a time.
+
+    `read_ahead` is how much is pulled off disk per read, and it is not the
+    processing granularity: the caller still gets exactly one row at a time.
+    Reading a single row per syscall would be slower with no benefit to anyone —
+    how much the disk hands over in one go is not a fact about the data, whereas
+    how much is processed at once decides what fails together.
+    """
+    for columns, rows in iter_file(path, read_ahead):
+        for row in rows:
+            yield columns, row

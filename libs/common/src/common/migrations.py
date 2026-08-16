@@ -59,6 +59,27 @@ def _checksum(sql: str) -> str:
     return hashlib.sha256(sql.encode("utf-8")).hexdigest()
 
 
+def _reject_unexecutable(path: Path, sql: str) -> None:
+    """Refuse a migration Postgres would silently truncate.
+
+    A NUL byte terminates the C string the driver hands to libpq, so everything
+    after it is never executed — while the statements before it succeed and the
+    migration is recorded as applied. The result is a schema that does not match
+    its own migration history, discovered much later and hard to explain.
+
+    This is not hypothetical: it happened here, to a migration whose comment
+    described NUL handling and contained one. Failing loudly costs nothing;
+    the alternative is a partial migration that reports success.
+    """
+    index = sql.find("\x00")
+    if index >= 0:
+        line = sql.count("\n", 0, index) + 1
+        raise ValueError(
+            f"Migration {path.name} contains a NUL byte at line {line}. Postgres "
+            "would stop reading there and silently apply only part of the file."
+        )
+
+
 def _applied(conn: psycopg.Connection) -> dict[str, str]:
     with conn.cursor() as cur:
         cur.execute("SELECT version, checksum FROM schema_migrations")
@@ -97,6 +118,9 @@ def migrate(migrations_dir: Path = MIGRATIONS_DIR) -> int:
 
         for version, path in migrations:
             sql = path.read_text(encoding="utf-8")
+            # Checked for every migration, applied or not: a file that would be
+            # truncated is worth knowing about even once it is in the history.
+            _reject_unexecutable(path, sql)
             if version not in applied:
                 pending.append((version, path, sql))
             elif applied[version] != _checksum(sql):

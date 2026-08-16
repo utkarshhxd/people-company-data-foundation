@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 TOPIC_PARTITIONS = 3
 TOPIC_REPLICATION_FACTOR = 1
 
+# How long to let the local produce queue drain before trying again, and how
+# many times. Only reached when producing faster than the broker accepts.
+_QUEUE_DRAIN_TIMEOUT = 1.0
+_PRODUCE_ATTEMPTS = 30
+
 
 class DeliveryFailed(Exception):
     pass
@@ -53,12 +58,28 @@ class EventProducer:
             self._failures.append(str(err))
 
     def publish(self, topic: str, key: str, event: dict[str, Any]) -> None:
-        self._producer.produce(
-            topic,
-            key=key.encode("utf-8"),
-            value=json.dumps(event, ensure_ascii=False).encode("utf-8"),
-            on_delivery=self._on_delivery,
-        )
+        payload = json.dumps(event, ensure_ascii=False).encode("utf-8")
+        encoded_key = key.encode("utf-8")
+        for attempt in range(_PRODUCE_ATTEMPTS):
+            try:
+                self._producer.produce(
+                    topic, key=encoded_key, value=payload,
+                    on_delivery=self._on_delivery,
+                )
+            except BufferError:
+                # The local queue is full, which a per-record producer reaches
+                # long before a per-batch one does. Waiting for the broker to
+                # drain is correct: dropping the event would leave a record
+                # processed but unannounced, and growing the queue without
+                # bound just moves the failure.
+                if attempt == _PRODUCE_ATTEMPTS - 1:
+                    raise DeliveryFailed(
+                        f"producer queue still full after {_PRODUCE_ATTEMPTS} attempts; "
+                        "the broker is not keeping up"
+                    ) from None
+                self._producer.poll(_QUEUE_DRAIN_TIMEOUT)
+                continue
+            break
         self._producer.poll(0)
 
     def flush(self, timeout: float = 30.0) -> None:

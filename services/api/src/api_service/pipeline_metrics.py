@@ -148,7 +148,8 @@ SPECS: tuple[MetricSpec, ...] = (
         (),
         """
         SELECT count(*) FROM resolvable_record rr
-        LEFT JOIN record_entity_link l ON l.record_id = rr.record_id
+        LEFT JOIN record_entity_link l
+          ON l.record_id = rr.record_id AND l.role = 'self'
         WHERE l.link_id IS NULL
         """,
     ),

@@ -49,11 +49,32 @@ class ValidateResult:
     failures: list[dict]
 
 
-def _status_for(error_failures: int, warning_failures: int) -> str:
-    # Errors dominate: a record with an unusable identifier is not "mostly fine".
-    if error_failures:
+def _status_for(
+    record_errors: int, attribute_errors: int, warning_failures: int
+) -> str:
+    """Is this record safe to resolve to an entity?
+
+    Only a *record*-scope error says no. Those are the rules that ask whether
+    the row could ever identify anybody — no identifying attribute, nothing but
+    null tokens — and a row failing one of them has nothing to resolve on.
+
+    An *attribute* error says a value cannot serve as the field it was mapped
+    to. That is a verdict on the value, not on the row. Real vendor exports
+    carry junk in one column routinely: a c_suite file shipped the literal
+    string `[object Object]` in `Phone` for 907 rows out of 1,000, every one of
+    which still had an email, a full name and a LinkedIn URL. Quarantining
+    those records would have withheld 90% of a perfectly identifiable file over
+    a column nobody needed, and a human reviewing them could only have said
+    "yes, the vendor's phone column is broken" nine hundred times.
+
+    The unusable value is still recorded as an error and still excluded from
+    resolution — it simply does not condemn everything beside it. Whether the
+    record retains an identifying attribute is a question the record rules ask
+    directly, which is where it belongs.
+    """
+    if record_errors:
         return STATUS_INVALID
-    if warning_failures:
+    if attribute_errors or warning_failures:
         return STATUS_WARNING
     return STATUS_VALID
 
@@ -77,6 +98,9 @@ def validate_record(
     errors = warnings = 0
     failed_rules: list[str] = []
     error_rules: list[str] = []
+    # Kept apart because they mean different things: one condemns a value, the
+    # other condemns the row. See _status_for.
+    record_errors = 0
 
     for obs in observations:
         # An unconfirmed mapping means we do not know what the value is supposed
@@ -122,6 +146,7 @@ def validate_record(
         if judgement.outcome == FAIL:
             if judgement.severity == SEVERITY_ERROR:
                 errors += 1
+                record_errors += 1
                 error_rules.append(judgement.rule_id)
                 failed_rules.append(judgement.rule_id)
             elif judgement.severity == SEVERITY_WARNING:
@@ -133,7 +158,7 @@ def validate_record(
             repository.json_value(judgement.details), RULESET_VERSION,
         ))
 
-    status = _status_for(errors, warnings)
+    status = _status_for(record_errors, errors - record_errors, warnings)
     record_row = (
         record_id, batch_id, source_id, entity_type,
         status, errors, warnings, validated, unvalidated,

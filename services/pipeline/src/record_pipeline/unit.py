@@ -30,6 +30,7 @@ from golden.pipeline import build_entity
 from ingestion import repository as ingest_repo
 from normalization import repository as norm_repo
 from normalization.pipeline import observations_for_record
+from resolution.employer import resolve_employer
 from resolution.keys import keys_for
 from resolution.pipeline import apply_decision, candidates_for
 from validation import repository as validation_repo
@@ -161,6 +162,7 @@ def process(
     keys: list = []
     decision = None
     entity_id: str | None = None
+    employer_entity_id: str | None = None
     if resolvable:
         keys = keys_for(
             ctx.entity_type, _confirmed_values(observations), ctx.source_id,
@@ -209,6 +211,17 @@ def process(
                 conn, record_id, ctx.entity_type, ctx.batch_id, ctx.source_id,
                 keys, decision, new_entity_id=entity_id,
             )
+            # The employer named inside a person row, resolved to a company of
+            # its own. Inside the same transaction as everything else the record
+            # produced, so a record and its employment land together.
+            if ctx.entity_type == "person":
+                employer_values = _confirmed_values(observations, "employer")
+                if employer_values:
+                    employer_entity_id = resolve_employer(
+                        conn, record_id, ctx.batch_id, ctx.source_id,
+                        employer_values, str(entity_id),
+                        new_entity_id=str(uuid7()),
+                    )
 
         # ---- 4. golden, in the same transaction --------------------------
         # Inside the record's own transaction, not after it. Two reasons, and
@@ -223,13 +236,20 @@ def process(
         #
         # build_entity reads the observations this transaction just wrote, which
         # works because a transaction always sees its own uncommitted writes.
+        golden_written = 0
         if resolvable and build_golden and entity_id:
             written, refreshed, _unchanged, _retired = build_entity(
                 conn, str(entity_id), ctx.entity_type
             )
             golden_written = written + refreshed
-        else:
-            golden_written = 0
+            # The employer is an entity with trusted values of its own, and it
+            # gains them from the same record in the same transaction. Skipping
+            # it would leave a company that exists but says nothing.
+            if employer_entity_id:
+                written, refreshed, _unchanged, _retired = build_entity(
+                    conn, employer_entity_id, "company"
+                )
+                golden_written += written + refreshed
 
         conn.commit()
 

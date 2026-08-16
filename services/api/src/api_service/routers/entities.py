@@ -72,6 +72,18 @@ def get_timeline(entity_id: EntityId) -> dict:
     return {"entity_id": entity_id, "count": len(events), "events": events}
 
 
+@router.get("/entities/{entity_id}/relationships")
+def get_relationships(entity_id: EntityId) -> dict:
+    """Who this entity is related to: a person's employer, a company's people.
+
+    One stored row answers both questions, read from either end.
+    """
+    result = lineage.entity_relationships(entity_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"no entity {entity_id}")
+    return result
+
+
 @router.get("/records/{record_id}")
 def get_record(record_id: str) -> dict:
     """The other direction: what became of one source row.

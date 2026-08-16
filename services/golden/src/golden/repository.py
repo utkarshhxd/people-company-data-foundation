@@ -52,7 +52,12 @@ def observations_for_entity(
                    o.source_id, s.source_name, s.reliability,
                    o.record_id, o.observed_at
             FROM record_entity_link l
-            JOIN attribute_observation o ON o.record_id = l.record_id
+            -- The link's role selects the observations it is a link to. A
+            -- person row also carries its employer's city and phone; without
+            -- this the person's golden record would be built from both, and
+            -- the employer's address would compete to become the person's.
+            JOIN attribute_observation o
+              ON o.record_id = l.record_id AND o.subject = l.role
             JOIN source s ON s.source_id = o.source_id
             WHERE l.entity_id = %s
               AND o.canonical_field IS NOT NULL

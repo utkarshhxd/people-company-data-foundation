@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from common.db import connect
 
 from resolution import repository
+from resolution.employer import resolve_employer
 from resolution.keys import IdentityKey, keys_for
 from resolution.scoring import (
     DECISION_LINK,
@@ -55,6 +56,7 @@ def candidates_for(conn, entity_type: str, keys: list[IdentityKey]):
 def apply_decision(
     conn, record_id: str, entity_type: str, batch_id: str, source_id: str,
     keys: list[IdentityKey], decision, new_entity_id: str | None = None,
+    role: str = "self",
 ) -> tuple[str, str]:
     """Write the consequences of a match decision. Returns (decision, entity_id).
 
@@ -77,6 +79,7 @@ def apply_decision(
             conn, record_id, entity_id, entity_type, batch_id, source_id,
             "no_identity_keys", 0.0, "new_entity",
             {"reason": "no identity key could be built from the confirmed fields"},
+            role=role,
         )
         return DECISION_NEW, entity_id
 
@@ -93,7 +96,7 @@ def apply_decision(
         repository.link_record(
             conn, record_id, match.entity_id, entity_type, batch_id, source_id,
             match.method, match.confidence, "auto_linked",
-            {**evidence, **match.evidence},
+            {**evidence, **match.evidence}, role=role,
         )
         # The record's own keys join the entity, so the next vendor's spelling
         # of the same organisation still finds it.
@@ -110,7 +113,7 @@ def apply_decision(
         conn, record_id, entity_id, entity_type, batch_id, source_id,
         decision.match.method if decision.match else "no_match",
         decision.match.confidence if decision.match else 0.0,
-        "new_entity", evidence,
+        "new_entity", evidence, role=role,
     )
     repository.add_keys(conn, entity_id, entity_type, record_id, keys)
 
@@ -125,7 +128,7 @@ def apply_decision(
 
 
 def resolve_record(conn, record, batch, batch_id: str) -> str:
-    """Resolve one record. Returns the decision taken."""
+    """Resolve one record. Returns the decision taken for the record itself."""
     record_id = str(record["record_id"])
     entity_type = batch["entity_type"]
     source_id = str(batch["source_id"])
@@ -136,9 +139,21 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
         role_email=repository.has_role_email(conn, record_id),
     )
     decision = candidates_for(conn, entity_type, keys) if keys else None
-    outcome, _ = apply_decision(
+    outcome, entity_id = apply_decision(
         conn, record_id, entity_type, batch_id, source_id, keys, decision
     )
+
+    # The employer named inside a person row is a company in its own right. It
+    # is resolved after the person because the relationship needs both ids, and
+    # its outcome deliberately does not change the record's own — whether we
+    # could identify someone's employer says nothing about whether we
+    # identified them.
+    if entity_type == "person":
+        employer_values = repository.record_values(conn, record_id, "employer")
+        if employer_values:
+            resolve_employer(
+                conn, record_id, batch_id, source_id, employer_values, entity_id
+            )
     return outcome
 
 

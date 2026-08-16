@@ -29,7 +29,11 @@ def resolvable_records(
             SELECT rr.record_id, r.row_number, rr.was_quarantined
             FROM resolvable_record rr
             JOIN raw_record r ON r.record_id = rr.record_id
-            LEFT JOIN record_entity_link l ON l.record_id = rr.record_id
+            -- role='self' in the join, not the WHERE: a record that has only
+            -- been linked to its employer has not been resolved to its own
+            -- entity yet, and must still appear as work to do.
+            LEFT JOIN record_entity_link l
+              ON l.record_id = rr.record_id AND l.role = 'self'
             WHERE rr.batch_id = %s AND l.link_id IS NULL
             ORDER BY r.row_number
             """,
@@ -39,12 +43,16 @@ def resolvable_records(
 
 
 def record_values(
-    conn: psycopg.Connection, record_id: str
+    conn: psycopg.Connection, record_id: str, subject: str = "self"
 ) -> dict[str, list[str]]:
     """Confirmed canonical field -> normalized values, in source column order.
 
     Only observations carrying a canonical_field appear: an unreviewed mapping
     must never decide who someone is.
+
+    Scoped to one subject, because an employer's phone number is not a key to
+    the person who works there — letting it in would build the same identity key
+    for every colleague and resolve them all to one person.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -52,11 +60,12 @@ def record_values(
             SELECT canonical_field, normalized_value
             FROM attribute_observation
             WHERE record_id = %s
+              AND subject = %s
               AND canonical_field IS NOT NULL
               AND normalized_value IS NOT NULL
             ORDER BY source_column, value_index
             """,
-            (record_id,),
+            (record_id, subject),
         )
         values: dict[str, list[str]] = {}
         for field_name, value in cur:
@@ -142,20 +151,22 @@ def create_entity(
 def link_record(
     conn: psycopg.Connection, record_id: str, entity_id: str, entity_type: str,
     batch_id: str, source_id: str, method: str, confidence: float,
-    status: str, evidence: dict,
+    status: str, evidence: dict, role: str = "self",
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO record_entity_link (
                 record_id, entity_id, entity_type, batch_id, source_id,
-                match_method, match_confidence, match_status, evidence
+                match_method, match_confidence, match_status, evidence, role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (record_id) DO NOTHING
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            -- Per (record, role): a record links to its own entity once and to
+            -- its employer once, and neither is a duplicate of the other.
+            ON CONFLICT (record_id, role) DO NOTHING
             """,
             (record_id, entity_id, entity_type, batch_id, source_id,
-             method, confidence, status, Json(evidence)),
+             method, confidence, status, Json(evidence), role),
         )
 
 
@@ -212,7 +223,9 @@ def resolution_counts(conn: psycopg.Connection, batch_id: str) -> dict[str, int]
             SELECT count(*) FILTER (WHERE match_status = 'auto_linked') AS linked,
                    count(*) FILTER (WHERE match_status = 'new_entity')  AS new_entities,
                    count(*) FILTER (WHERE match_status = 'manual')      AS manual
-            FROM record_entity_link WHERE batch_id = %s
+            -- Records resolved, not links written. An employer link is a
+            -- consequence of resolving a record, never a second record.
+            FROM record_entity_link WHERE batch_id = %s AND role = 'self'
             """,
             (batch_id,),
         )
@@ -322,7 +335,8 @@ def get_candidate(conn: psycopg.Connection, candidate_id: str) -> dict[str, Any]
             """
             SELECT c.*, l.entity_id AS record_entity_id
             FROM match_candidate c
-            LEFT JOIN record_entity_link l ON l.record_id = c.record_id
+            LEFT JOIN record_entity_link l
+              ON l.record_id = c.record_id AND l.role = 'self'
             WHERE c.candidate_id = %s
             """,
             (candidate_id,),
@@ -394,5 +408,70 @@ def entity_sources(conn: psycopg.Connection, entity_id: str) -> list[dict[str, A
             ORDER BY l.linked_at
             """,
             (entity_id,),
+        )
+        return cur.fetchall()
+
+
+def assert_relationship(
+    conn: psycopg.Connection, from_entity_id: str, to_entity_id: str,
+    relationship_type: str, record_id: str, batch_id: str, source_id: str,
+    evidence: dict,
+) -> None:
+    """Record that this record says these two entities are related.
+
+    Idempotent per (from, to, type) while current, so a second vendor asserting
+    the same employment refreshes the evidence rather than duplicating it. A
+    person moving employer is not handled here: that closes the old row, which
+    needs a decision about how a *disagreement* differs from a *change*, and
+    both currently look identical in a batch of vendor files.
+    """
+    if from_entity_id == to_entity_id:
+        # The check constraint would refuse it anyway; failing the whole record
+        # over a vendor row that named a person as their own employer would not
+        # be an improvement on ignoring it.
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO entity_relationship (
+                from_entity_id, to_entity_id, relationship_type,
+                record_id, batch_id, source_id, evidence
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (from_entity_id, to_entity_id, relationship_type)
+                WHERE valid_to IS NULL
+            DO UPDATE SET evidence = EXCLUDED.evidence
+            """,
+            (from_entity_id, to_entity_id, relationship_type, record_id,
+             batch_id, source_id, Json(evidence)),
+        )
+
+
+def entity_relationships(
+    conn: psycopg.Connection, entity_id: str
+) -> list[dict]:
+    """Current relationships in both directions: where someone works, who works here."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT r.relationship_type, r.evidence, r.valid_from,
+                   r.to_entity_id   AS other_entity_id, 'outgoing' AS direction,
+                   e.entity_type    AS other_entity_type
+            FROM entity_relationship r
+            JOIN entity e ON e.entity_id = r.to_entity_id
+            WHERE r.from_entity_id = %(entity)s AND r.valid_to IS NULL
+
+            UNION ALL
+
+            SELECT r.relationship_type, r.evidence, r.valid_from,
+                   r.from_entity_id AS other_entity_id, 'incoming' AS direction,
+                   e.entity_type    AS other_entity_type
+            FROM entity_relationship r
+            JOIN entity e ON e.entity_id = r.from_entity_id
+            WHERE r.to_entity_id = %(entity)s AND r.valid_to IS NULL
+
+            ORDER BY valid_from
+            """,
+            {"entity": entity_id},
         )
         return cur.fetchall()

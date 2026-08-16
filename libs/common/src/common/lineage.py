@@ -121,7 +121,11 @@ SELECT o.observation_id,
        l.match_status,
        rv.status            AS record_validation_status
 FROM record_entity_link l
-JOIN attribute_observation o ON o.record_id = l.record_id
+-- The link's role picks the observations it is a link to, so explaining a
+-- company's address never reaches for the address of the person whose row
+-- named it as their employer.
+JOIN attribute_observation o
+  ON o.record_id = l.record_id AND o.subject = l.role
 JOIN raw_record r ON r.record_id = o.record_id
 JOIN batch b ON b.batch_id = o.batch_id
 JOIN source s ON s.source_id = o.source_id
@@ -165,7 +169,8 @@ def explain_value(entity_id: str, canonical_field: str) -> dict[str, Any] | None
                 SELECT v.rule_id, v.severity, v.outcome, v.message, v.observation_id
                 FROM validation_result v
                 JOIN attribute_observation o ON o.observation_id = v.observation_id
-                JOIN record_entity_link l ON l.record_id = o.record_id
+                JOIN record_entity_link l
+                  ON l.record_id = o.record_id AND l.role = o.subject
                 WHERE l.entity_id = %s AND o.canonical_field = %s
                 ORDER BY (v.severity = 'error') DESC, v.rule_id
                 """,
@@ -346,7 +351,10 @@ def record_lineage(record_id: str) -> dict[str, Any] | None:
             JOIN source s ON s.source_id = r.source_id
             LEFT JOIN record_validation rv ON rv.record_id = r.record_id
             LEFT JOIN quarantine_item q ON q.record_id = r.record_id
-            LEFT JOIN record_entity_link l ON l.record_id = r.record_id
+            -- The record's own entity. Without the role this returns a second
+            -- row for the employer link and the record appears twice.
+            LEFT JOIN record_entity_link l
+              ON l.record_id = r.record_id AND l.role = 'self'
             WHERE r.record_id = %s
             """,
             (record_id,),
@@ -381,3 +389,61 @@ def record_lineage(record_id: str) -> dict[str, Any] | None:
         record["golden_values_won"] = cur.fetchall()
 
     return record
+
+
+def entity_relationships(entity_id: str) -> dict[str, Any] | None:
+    """Which entities this one is related to, in both directions.
+
+    Both directions because both questions are asked: "where does this person
+    work" and "who works at this company". A relationship is stored once, from
+    the person to the company, so answering the second from the first is a
+    matter of reading the same row the other way round.
+
+    Each related entity carries its own display name, taken from its golden
+    record, so a caller does not have to fetch every id to render a list.
+    """
+    with connect() as conn:
+        entity = resolve_entity(conn, entity_id)
+        if entity is None:
+            return None
+        resolved_id = str(entity["entity_id"])
+
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                WITH related AS (
+                    SELECT r.relationship_type, r.valid_from, r.evidence,
+                           r.to_entity_id AS other_id, 'employer' AS direction,
+                           r.record_id
+                    FROM entity_relationship r
+                    WHERE r.from_entity_id = %(entity)s AND r.valid_to IS NULL
+
+                    UNION ALL
+
+                    SELECT r.relationship_type, r.valid_from, r.evidence,
+                           r.from_entity_id, 'employee', r.record_id
+                    FROM entity_relationship r
+                    WHERE r.to_entity_id = %(entity)s AND r.valid_to IS NULL
+                )
+                SELECT related.relationship_type, related.direction,
+                       related.valid_from, related.evidence, related.record_id,
+                       related.other_id AS entity_id, e.entity_type,
+                       (SELECT g.value FROM golden_attribute g
+                         WHERE g.entity_id = related.other_id
+                           AND g.valid_to IS NULL
+                           AND g.canonical_field IN ('company_name', 'full_name')
+                         LIMIT 1) AS display_name
+                FROM related
+                JOIN entity e ON e.entity_id = related.other_id
+                ORDER BY related.direction, display_name NULLS LAST
+                """,
+                {"entity": resolved_id},
+            )
+            relationships = cur.fetchall()
+
+    return {
+        "requested_entity_id": entity_id,
+        "entity_id": resolved_id,
+        "count": len(relationships),
+        "relationships": relationships,
+    }

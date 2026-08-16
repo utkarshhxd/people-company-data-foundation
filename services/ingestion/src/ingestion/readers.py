@@ -69,21 +69,62 @@ def read_csv(path: Path) -> tuple[list[str], list[Row]]:
     return columns, _frame_to_rows(frame)
 
 
-def read_excel(path: Path) -> tuple[list[str], list[Row]]:
+class MultipleSheets(Exception):
+    """The workbook holds more than one sheet of data.
+
+    Sheets are separate layouts — LeadsNemo_Test1.xlsx carries two with
+    different column orders — so which one is being loaded has to be a decision
+    somebody made, not the first one the reader happened to reach. Reading only
+    sheet 1 and saying nothing is silent data loss, which is the one thing this
+    pipeline is built not to do.
+    """
+
+
+def sheet_names(path: Path) -> list[str]:
+    """Names of the sheets holding data, in workbook order.
+
+    Empty sheets are excluded: a workbook routinely carries a couple of blank
+    ones nobody deleted, and refusing to load because of them would be pedantry
+    rather than safety.
+    """
+    import fastexcel
+
+    reader = fastexcel.read_excel(str(path))
+    names = []
+    for name in reader.sheet_names:
+        sheet = reader.load_sheet_by_name(name, n_rows=1)
+        if sheet.height > 0 or sheet.width > 0:
+            names.append(name)
+    return names or list(reader.sheet_names[:1])
+
+
+def read_excel(path: Path, sheet: str | None = None) -> tuple[list[str], list[Row]]:
     # infer_schema_length=0 makes every column pl.String.
-    frame = pl.read_excel(path, engine="calamine", infer_schema_length=0)
+    available = sheet_names(path)
+    if sheet is None:
+        if len(available) > 1:
+            raise MultipleSheets(
+                f"{path.name} has {len(available)} sheets with data "
+                f"({', '.join(available)}). Name the one to load with --sheet; "
+                f"each sheet is a separate layout and becomes its own batch."
+            )
+        sheet = available[0]
+
+    frame = pl.read_excel(
+        path, engine="calamine", infer_schema_length=0, sheet_name=sheet
+    )
     columns = disambiguate(list(frame.columns))
     frame.columns = columns
     return columns, _frame_to_rows(frame)
 
 
-def read_file(path: Path) -> tuple[list[str], list[Row]]:
+def read_file(path: Path, sheet: str | None = None) -> tuple[list[str], list[Row]]:
     """Read a whole file into memory. Prefer `iter_file` for anything large."""
     suffix = path.suffix.lower()
     if suffix in CSV_SUFFIXES:
         return read_csv(path)
     if suffix in EXCEL_SUFFIXES:
-        return read_excel(path)
+        return read_excel(path, sheet)
     raise UnsupportedFileType(
         f"{path.name}: expected one of {sorted(CSV_SUFFIXES | EXCEL_SUFFIXES)}"
     )
@@ -135,7 +176,9 @@ def iter_csv(path: Path, batch_size: int) -> Iterator[tuple[list[str], list[Row]
         yield columns, pending
 
 
-def iter_excel(path: Path, batch_size: int) -> Iterator[tuple[list[str], list[Row]]]:
+def iter_excel(
+    path: Path, batch_size: int, sheet: str | None = None
+) -> Iterator[tuple[list[str], list[Row]]]:
     """Batch an Excel file after reading it.
 
     Unlike CSV there is no streaming path: the format is a zip archive whose
@@ -144,13 +187,13 @@ def iter_excel(path: Path, batch_size: int) -> Iterator[tuple[list[str], list[Ro
     keeps the write path identical to CSV — but peak memory here is the file,
     and that limit is real rather than an oversight.
     """
-    columns, rows = read_excel(path)
+    columns, rows = read_excel(path, sheet)
     for start in range(0, len(rows), batch_size):
         yield columns, rows[start : start + batch_size]
 
 
 def iter_file(
-    path: Path, batch_size: int = DEFAULT_BATCH_SIZE
+    path: Path, batch_size: int = DEFAULT_BATCH_SIZE, sheet: str | None = None
 ) -> Iterator[tuple[list[str], list[Row]]]:
     """Yield (columns, rows) a batch at a time. Empty files yield nothing."""
     if batch_size < 1:
@@ -159,7 +202,7 @@ def iter_file(
     if suffix in CSV_SUFFIXES:
         yield from iter_csv(path, batch_size)
     elif suffix in EXCEL_SUFFIXES:
-        yield from iter_excel(path, batch_size)
+        yield from iter_excel(path, batch_size, sheet)
     else:
         raise UnsupportedFileType(
             f"{path.name}: expected one of {sorted(CSV_SUFFIXES | EXCEL_SUFFIXES)}"
@@ -167,7 +210,7 @@ def iter_file(
 
 
 def iter_rows(
-    path: Path, read_ahead: int = DEFAULT_BATCH_SIZE
+    path: Path, read_ahead: int = DEFAULT_BATCH_SIZE, sheet: str | None = None
 ) -> Iterator[tuple[list[str], Row]]:
     """Yield (columns, row) one row at a time.
 
@@ -177,6 +220,6 @@ def iter_rows(
     how much the disk hands over in one go is not a fact about the data, whereas
     how much is processed at once decides what fails together.
     """
-    for columns, rows in iter_file(path, read_ahead):
+    for columns, rows in iter_file(path, read_ahead, sheet):
         for row in rows:
             yield columns, row

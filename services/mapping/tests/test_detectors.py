@@ -1,5 +1,4 @@
 import pytest
-
 from mapping.detectors import (
     is_email,
     is_integer,

@@ -23,7 +23,7 @@ order and the transaction boundary, and nothing else.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from common.ids import uuid7
 from golden.pipeline import build_entity
@@ -138,7 +138,7 @@ def process(
 ) -> RecordOutcome:
     """Run one record the whole way through. Commits it, or raises."""
     record_id = uuid7()
-    observed_at = datetime.now(timezone.utc)
+    observed_at = datetime.now(UTC)
 
     # ---- 1. compute, in memory ------------------------------------------
     observation_tuples = observations_for_record(

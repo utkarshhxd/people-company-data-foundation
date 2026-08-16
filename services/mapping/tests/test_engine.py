@@ -1,5 +1,4 @@
 import pytest
-
 from mapping.engine import (
     STATUS_AUTO_ACCEPTED,
     STATUS_NEEDS_REVIEW,

@@ -37,9 +37,16 @@ This repository is being built incrementally.
 - **Increment 10** — pipeline metrics: make the quiet failure modes visible —
   review backlogs, contested values, and how long the oldest item has been
   waiting. (`docs/decisions/0010-increment-10-pipeline-metrics.md`)
-- **Increment 11** (this state) — review findings: streamed batch ingestion,
+- **Increment 11** — review findings: streamed batch ingestion,
   validation rules split per concern, address rules added, duplicate detection
   hardened. (`docs/decisions/0011-increment-11-review-findings.md`)
+- **Increment 12** — record-at-a-time processing: one record carried from raw
+  row to golden value before the next starts, so a record's fate stops
+  depending on the rows it shared a file with.
+  (`docs/decisions/0012-record-at-a-time-processing.md`)
+- **Increment 13** (this state) — the employer named in a person row becomes a
+  company entity of its own, linked by an `employed_at` relationship.
+  (`docs/decisions/0013-employer-as-an-entity.md`)
 
 ## Repository layout
 
@@ -57,7 +64,9 @@ services/validation/     # validation consumer + validate/quarantine CLIs
 services/resolution/     # entity-resolution consumer + resolve CLI
 services/golden/         # golden-record consumer + golden CLI
 services/pipeline/       # record-at-a-time path: one record, end to end
+tools/                   # measurement and maintenance scripts, mounted at /tools
 data/inbox/              # local drop dir, bind-mounted into the ingestion container
+testfiles/               # real vendor exports (gitignored: they carry personal data)
 ```
 
 There are two ways a record can be processed, and they run the same stage logic:
@@ -72,7 +81,23 @@ There are two ways a record can be processed, and they run the same stage logic:
 
 Neither reimplements the other: both call the same functions, so they cannot
 disagree about what a record means. That is verified rather than asserted — see
-`data/inbox/_parity.py` and [ADR 0012](docs/decisions/0012-record-at-a-time-processing.md).
+`tools/parity.py` and [ADR 0012](docs/decisions/0012-record-at-a-time-processing.md).
+
+## Working with real vendor files
+
+Real exports are large and carry personal data, so `testfiles/` is gitignored
+and never loaded whole. Cut a bounded sample per layout instead — every sheet
+of a workbook becomes its own file, because sheets are separate layouts:
+
+```powershell
+docker compose run --rm pipeline python /tools/sample_file.py /tf --all --rows 1000
+
+# Which columns would need a human before loading anything
+docker compose run --rm pipeline python /tools/mapping_coverage.py
+```
+
+`sample_file.py` streams Excel with openpyxl in read-only mode, which is how a
+386,327 x 55 sheet is read at ~280 MB instead of materializing the workbook.
 
 ## Prerequisites
 
@@ -212,9 +237,16 @@ If a batch fails part-way, the rows already written **stay** — they are what t
 source said — and the batch is marked `failed`. Every downstream stage requires
 `completed`, so partial rows are inert rather than dangerous.
 
-Excel is batched but still read whole: the format is a zip archive whose rows
-cannot be reached without decompressing the sheet. That limit is real, not an
-oversight.
+Excel is batched but still read whole through this path: the format is a zip
+archive whose rows cannot be reached without decompressing the sheet. (
+`tools/sample_file.py` does stream it, with openpyxl in read-only mode, which
+is how a 386,327-row sheet is sampled at ~280 MB.)
+
+**A workbook with more than one sheet of data must say which to load.** Sheets
+are separate layouts — `LeadsNemo_Test1.xlsx` carries two with different column
+orders — and taking the first silently dropped 19,926 records with nothing
+recording the gap. Empty sheets are ignored, since a couple of blank ones
+nobody deleted is not ambiguity.
 
 ### Duplicate files
 
@@ -338,10 +370,17 @@ It never repairs a value and never deletes a record. Judgements are attached
 alongside the observation, which stays untouched. Three severities, and the
 difference decides what happens next:
 
-- `error` — the value cannot serve as this field at all (`not-an-email`), or the
-  row has no identifying attribute and could never be resolved to an entity.
-  The record becomes **`invalid`**, which means *not safe to resolve yet* — not
-  *delete me*. Every raw record and observation survives.
+- `error` — either the value cannot serve as this field at all (`not-an-email`),
+  or the row has no identifying attribute and could never be resolved. **Only
+  the second invalidates the record.** An unusable value is a verdict on the
+  value; it is recorded as an error and excluded from resolution, but it leaves
+  the record `warning` rather than condemning everything beside it. A c_suite
+  export shipped the literal string `[object Object]` in `Phone` for 907 rows
+  out of 1,000 — every one still had an email, a name and a LinkedIn URL, and
+  quarantining them would have withheld 90% of an identifiable file over a
+  column nobody needed.
+  `invalid` means *not safe to resolve yet* — never *delete me*. Every raw
+  record and observation survives either way.
 - `warning` — plausible but suspect: a phone with no country code, `employees`
   written as `50-100`, a role mailbox (`info@`) on a *person* record.
 - `info` — recorded, no judgement implied.
@@ -504,6 +543,41 @@ sic_description vendor_dc Associations
 Every value is still attributed to the vendor that reported it, and nothing was
 overwritten.
 
+## The employer named in a person row
+
+A vendor person export describes two subjects: the person, and the company they
+work for. `Company City` and `City` both answer the canonical field `city`, and
+they are not competing answers — they are answers about different subjects.
+
+Every canonical field carries a **subject**, `self` or `employer`. The row stays
+one record; what gains a role is the link:
+
+```
+raw_record ──┬── observations subject='self'     → person entity   role='self'
+             └── observations subject='employer' → company entity  role='employer'
+                                                   + employed_at relationship
+```
+
+The link's role selects the observations it is a link to, so a person's trusted
+record is never built from their employer's address.
+
+**An employer becomes an entity only when the row identifies it.** A name alone
+does not — "Consulting" appears thousands of times meaning thousands of
+companies — so a domain, LinkedIn page, vendor id, phone or address must stand
+beside it. `Self Employed`, `Freelance` and `Retired` are refused outright.
+An employer that fails these tests keeps every observation; there is simply no
+entity yet.
+
+```powershell
+curl.exe "http://localhost:8000/entities/<id>/relationships"
+```
+
+Answers from either end: where a person works, and who works at a company. On
+1,000 Apollo rows: 1,000 people, 999 employments, **868 distinct companies** —
+131 employers recognised as somewhere a colleague already worked.
+
+See [ADR 0013](docs/decisions/0013-employer-as-an-entity.md).
+
 ## Golden record
 
 The deliverable: one trusted value per entity per field, with the rule that
@@ -664,6 +738,13 @@ If Postgres is unreachable the endpoint still returns 200 with
 `pcdf_metrics_up 0` and no stale gauges — monitoring that dies with the database
 is useless exactly when it is needed.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` builds all eight images, runs all eight suites
+in-container, runs `ruff check` and `ruff format --check`, and applies every
+migration against an **empty** database — twice, because a migration that is not
+idempotent is a migration that cannot be re-run.
+
 ## Running tests
 
 Polars, psycopg's binary driver, and confluent-kafka are all native
@@ -677,6 +758,7 @@ docker compose run --rm normalization python -m pytest tests -v
 docker compose run --rm validation python -m pytest tests -v
 docker compose run --rm resolution python -m pytest tests -v
 docker compose run --rm golden python -m pytest tests -v
+docker compose run --rm pipeline python -m pytest tests -v
 
 # api has no `uv run` entrypoint in compose, so invoke it explicitly
 docker compose run --rm api uv run --frozen --no-sync python -m pytest services/api/tests -v

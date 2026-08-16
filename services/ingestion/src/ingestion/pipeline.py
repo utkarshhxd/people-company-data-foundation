@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from common import events
@@ -175,7 +175,7 @@ def _publish(
                 entity_type,
                 file_name,
                 rows_ingested,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),
         )
         producer.flush()

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from ingestion.pipeline import ReingestBlocked, ingest
-from ingestion.readers import DEFAULT_BATCH_SIZE, CSV_SUFFIXES, UnsupportedFileType
+from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -13,3 +13,21 @@ package = false
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+
+[tool.ruff.lint]
+ignore = [
+    # Blind `except Exception` is load-bearing here, not laziness. It appears in
+    # exactly two shapes, and both exist so that one failure costs one thing:
+    #
+    #   * the per-record and per-batch runners catch it to write the failure to
+    #     record_error and carry on, which is the property record-at-a-time
+    #     processing is *for* — one unprocessable row costs one row.
+    #   * the Kafka consumers and the metrics collector catch it so a single bad
+    #     event or an unreachable database does not take the process down.
+    #     Monitoring that dies with the database is useless exactly when needed.
+    #
+    # Narrowing these would mean listing every exception a normalizer, a rule or
+    # a driver might raise, and being wrong about that list is what turns a bad
+    # row into a lost file.
+    "BLE001",
+]

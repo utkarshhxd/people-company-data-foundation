@@ -93,7 +93,7 @@ def obs_params(record_id, batch_id, source_id, payload, with_id: bool):
             "auto_accepted", 0, str(value), str(value).lower(), "text",
             "text:trim", False,
         )
-        out.append(((uuid7(), *tail) if with_id else tail))
+        out.append((uuid7(), *tail) if with_id else tail)
     return out
 
 

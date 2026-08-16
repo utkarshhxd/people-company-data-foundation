@@ -9,7 +9,7 @@ import json
 import logging
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import FrameType
 
 from common import events
@@ -57,7 +57,7 @@ def _handle(payload: dict, producer: EventProducer) -> None:
             entity_type=batch["entity_type"],
             counts=result.counts,
             schema_version=payload.get("schema_version", "1"),
-            mapped_at=datetime.now(timezone.utc),
+            mapped_at=datetime.now(UTC),
         ),
     )
     producer.flush()

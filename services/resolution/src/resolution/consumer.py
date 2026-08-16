@@ -9,7 +9,7 @@ import json
 import logging
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import FrameType
 
 from common import events
@@ -51,7 +51,7 @@ def _handle(payload: dict, producer: EventProducer) -> None:
             created=result.created,
             candidates=result.candidates,
             counts=result.counts,
-            resolved_at=datetime.now(timezone.utc),
+            resolved_at=datetime.now(UTC),
         ),
     )
     producer.flush()

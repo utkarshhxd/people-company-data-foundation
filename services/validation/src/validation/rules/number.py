@@ -1,7 +1,7 @@
 """Numeric rules: employee counts, founding years, and the integers behind them."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from validation.rules.base import (
     SEVERITY_ERROR,
@@ -51,7 +51,7 @@ def rule_founded_year_range(value: str, ctx: AttributeContext) -> Judgement | No
     if ctx.canonical_field != "founded_year":
         return None
     year = int(value)
-    current = datetime.now(timezone.utc).year
+    current = datetime.now(UTC).year
     if year < MIN_FOUNDED_YEAR:
         return failed("founded_year.range", SEVERITY_ERROR,
                       f"{year} predates {MIN_FOUNDED_YEAR}", year=year)

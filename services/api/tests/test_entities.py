@@ -6,7 +6,7 @@ an empty body. The joins themselves are exercised against a real database in the
 end-to-end verification, because a stub cannot tell you whether a join is right.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from api_service.main import app
@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
-NOW = datetime(2026, 8, 13, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 13, tzinfo=UTC)
 ENTITY = "019ff9ac-dc79-749b-9b84-6e5e19fc03a4"
 
 

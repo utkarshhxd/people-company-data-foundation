@@ -1,0 +1,113 @@
+name: CI
+
+# Every suite runs in its own container, which is not a preference: polars,
+# psycopg's binary driver and confluent-kafka are native extensions, and the
+# development machine's Application Control policy blocks them outside Docker.
+# CI matching that exactly is what stops "works in CI" and "works here" from
+# drifting apart.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uvx ruff check .
+      - run: uvx ruff format --check .
+
+  migrations:
+    # Applied against an empty database, because a migration that only works
+    # against the schema it was written on top of is not a migration.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-alpine
+        env:
+          POSTGRES_USER: pcdf_dev
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: pcdf
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pcdf_dev -d pcdf"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Apply every migration from empty
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: pcdf_dev
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: pcdf
+          PCDF_MIGRATIONS_DIR: db/migrations
+        run: uv run --frozen python -m common.migrations
+      - name: Applying them twice must change nothing
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: pcdf_dev
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: pcdf
+          PCDF_MIGRATIONS_DIR: db/migrations
+        run: uv run --frozen python -m common.migrations
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - ingestion
+          - mapping
+          - normalization
+          - validation
+          - resolution
+          - golden
+          - pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          tags: pcdf-${{ matrix.service }}:ci
+          load: true
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Test ${{ matrix.service }}
+        run: docker run --rm pcdf-${{ matrix.service }}:ci python -m pytest tests -v
+
+  test-api:
+    # Separate because the api image has no `uv run` entrypoint and its tests
+    # live at a workspace path rather than beside the service.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api/Dockerfile
+          tags: pcdf-api:ci
+          load: true
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - run: >-
+          docker run --rm pcdf-api:ci
+          uv run --frozen --no-sync python -m pytest services/api/tests -v

@@ -7,7 +7,6 @@ end-to-end run instead, where a real divergence would actually show up.
 """
 
 import pytest
-
 from record_pipeline.context import samples_from_rows
 from record_pipeline.unit import (
     _confirmed_values,

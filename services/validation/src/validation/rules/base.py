@@ -19,8 +19,8 @@ and "every rule passed" are very different statements about a record.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"

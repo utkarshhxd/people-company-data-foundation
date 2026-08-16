@@ -1,7 +1,6 @@
 """Normalizer tests. Most inputs are real values taken from vendor files."""
 
 import pytest
-
 from normalization.normalizers import (
     is_null_token,
     normalize,

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from golden.strategies import (
@@ -11,7 +11,7 @@ from golden.strategies import (
     strategy_for,
 )
 
-BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def obs(value, source, reliability=0.5, days=0, record=None):

@@ -7,7 +7,7 @@ round-trips that it can.
 """
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from common.canonical import CANONICAL_SCHEMA_VERSION  # noqa: F401
 from common.db import connect
@@ -56,7 +56,7 @@ def main():
     }
 
     batch_id, source_id = str(uuid7()), str(uuid7())
-    observed_at = datetime.now(timezone.utc)
+    observed_at = datetime.now(UTC)
 
     # --- normalize -------------------------------------------------------
     per_record_obs = []
@@ -144,7 +144,7 @@ def main():
               f"{len(obs)} field(s)")
         print(f"  current_values           {1e3 * t_cur:8.2f} ms  "
               f"{len(cur_vals)} current value(s)")
-        print(f"  -> rebuilt once per record linked to this entity")
+        print("  -> rebuilt once per record linked to this entity")
         conn.rollback()
 
 

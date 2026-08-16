@@ -6,7 +6,7 @@ from pathlib import Path
 from common.db import connect
 from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked
-from ingestion.readers import DEFAULT_BATCH_SIZE, CSV_SUFFIXES, UnsupportedFileType
+from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
 
 from record_pipeline import repository
 from record_pipeline.runner import EmptySource, run_file

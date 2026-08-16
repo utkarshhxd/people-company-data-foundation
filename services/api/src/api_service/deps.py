@@ -1,19 +1,17 @@
 import asyncio
 
 import psycopg
-from confluent_kafka.admin import AdminClient
-
 from common.config import settings
+from confluent_kafka.admin import AdminClient
 
 
 async def check_postgres() -> None:
     """Raises if Postgres is unreachable or doesn't respond to a trivial query."""
     async with await psycopg.AsyncConnection.connect(
         settings.postgres_dsn, connect_timeout=5
-    ) as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT 1")
-            await cur.fetchone()
+    ) as conn, conn.cursor() as cur:
+        await cur.execute("SELECT 1")
+        await cur.fetchone()
 
 
 def _list_kafka_topics() -> None:

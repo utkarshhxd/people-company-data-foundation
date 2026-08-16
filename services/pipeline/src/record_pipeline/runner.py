@@ -11,7 +11,7 @@ batching cannot: one unprocessable row costs one row.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 
@@ -245,7 +245,7 @@ def _drive(
                     outcome.record_id, batch_id, source_id, entity_type,
                     outcome.entity_id, outcome.validation_status,
                     outcome.quarantined, outcome.match_decision,
-                    datetime.now(timezone.utc),
+                    datetime.now(UTC),
                 ),
             )
 

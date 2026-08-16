@@ -60,11 +60,22 @@ UNRULED_VALUE_TYPES = frozenset(
 )
 
 __all__ = [
-    "AttributeContext", "Judgement", "Rule",
-    "PASS", "FAIL", "DIGITS",
-    "SEVERITY_ERROR", "SEVERITY_WARNING", "SEVERITY_INFO",
-    "RULESET_VERSION", "RULES_BY_VALUE_TYPE", "UNRULED_VALUE_TYPES",
-    "judge_attribute", "passed", "failed", "rule_normalization_outcome",
+    "DIGITS",
+    "FAIL",
+    "PASS",
+    "RULESET_VERSION",
+    "RULES_BY_VALUE_TYPE",
+    "SEVERITY_ERROR",
+    "SEVERITY_INFO",
+    "SEVERITY_WARNING",
+    "UNRULED_VALUE_TYPES",
+    "AttributeContext",
+    "Judgement",
+    "Rule",
+    "failed",
+    "judge_attribute",
+    "passed",
+    "rule_normalization_outcome",
 ]
 
 

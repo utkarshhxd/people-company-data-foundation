@@ -6,6 +6,8 @@
 testfiles/
 
 # Local ingestion drop dir: real data stays out of git, sample files are kept.
+# Samples cut from testfiles/ land in data/inbox/samples/ and carry the same
+# personal data the originals do, so they are covered by the blanket ignore.
 data/inbox/*
 !data/inbox/messy_people.csv
 !data/inbox/collision_people.csv
@@ -14,14 +16,6 @@ data/inbox/*
 !data/inbox/near_match_company.csv
 !data/inbox/vendor_c_update.csv
 
-# Measurement and maintenance scripts. They live in data/inbox because that is
-# the directory bind-mounted into the containers, which is where they have to
-# run — the native Python extensions this project depends on cannot be loaded
-# outside Docker on the development machine.
-!data/inbox/_parity.py
-!data/inbox/_bench_perrecord.py
-!data/inbox/_gen20k.py
-!data/inbox/_purge_source.py
 .venv/
 __pycache__/
 *.pyc

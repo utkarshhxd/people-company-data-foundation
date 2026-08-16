@@ -62,6 +62,21 @@ DETECTORS = {
     "postal_code": is_postal_code,
 }
 
+# Detectors whose match narrows *which family of field* a column belongs to,
+# and those that only describe the shape of a value.
+#
+# The distinction decides whether values may propose a field on their own. A
+# column of linkedin.com URLs belongs to a LinkedIn field; a column of email
+# addresses belongs to an email field. But every count, score, rating,
+# identifier and year is an integer, and a US ZIP is indistinguishable from any
+# other five digits — so proposing a field from those is naming one
+# arbitrarily. Real evidence: `instagram_followers`, `ads_adwords` and
+# `googlereviewscount` each proposed `employee_count` purely for being numeric.
+#
+# Shape detectors still corroborate a name-based candidate, which is their
+# proper use: the column is *called* phone and the values are phone-shaped.
+DISCRIMINATING_DETECTORS = frozenset({"email", "linkedin", "url"})
+
 
 def match_ratio(detector: str, values: list[str]) -> float:
     """Fraction of non-empty values matching the detector. 0.0 when nothing to judge."""

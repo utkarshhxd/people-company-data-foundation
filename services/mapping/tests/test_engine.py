@@ -122,3 +122,94 @@ def test_company_entity_uses_company_vocabulary():
     assert mapping.canonical_field == "website"
     # 'website' is not a person field, so the person vocabulary must not match it.
     assert map_column("website", "person", []).canonical_field != "website"
+
+
+def test_shape_detector_alone_does_not_propose_a_field():
+    """'These are integers' does not say which integer field.
+
+    Every follower count, review count, rating and ad flag in a real vendor
+    export is an integer. Proposing employee_count for all of them names a
+    field arbitrarily, and a plausible-looking proposal is worse than none
+    because a reviewer tends to accept it.
+    """
+    mapping = map_column("instagram_followers", "company", ["1200", "845", "23110"])
+    assert mapping.canonical_field != "employee_count"
+    assert mapping.status == STATUS_UNMAPPED
+
+
+def test_shape_detector_still_corroborates_a_name_match():
+    """Values may confirm a name-based candidate even when they cannot originate one."""
+    mapping = map_column("employee_size", "company", ["12", "400", "37"])
+    assert mapping.canonical_field == "employee_count"
+
+
+def test_discriminating_detector_may_still_propose():
+    """A column of linkedin.com URLs belongs to a LinkedIn field whatever it is called.
+
+    The column name here is deliberately one no alias or fuzzy match reaches,
+    so the values are the only evidence there is.
+    """
+    mapping = map_column("social_page_2", "person",
+                         ["https://linkedin.com/in/a", "https://linkedin.com/in/b"])
+    assert mapping.canonical_field == "linkedin_url"
+    assert mapping.method == "value_analysis"
+
+
+def test_a_shape_guess_never_reaches_the_collision_at_all():
+    """The stronger guarantee: the bogus claim is not made, so nothing contests.
+
+    `domain_expiration` holds phone-shaped digits, but 'is phone-shaped' is not
+    grounds to claim the phone field — so `phone` keeps its auto-accept without
+    a collision ever having to be settled.
+    """
+    columns = ["phone", "domain_expiration"]
+    samples = {
+        "phone": ["19172316712", "12123121600"],
+        "domain_expiration": ["20260415", "20271130"],
+    }
+    got = {m.source_column: m for m in map_columns(columns, "company", samples)}
+    assert got["phone"].canonical_field == "phone"
+    assert got["phone"].status == STATUS_AUTO_ACCEPTED
+    assert "collision" not in got["phone"].evidence
+    assert got["domain_expiration"].canonical_field != "phone"
+
+
+def test_exact_alias_holds_the_field_against_a_value_based_claim():
+    """When a collision does form, the better kind of evidence takes the field."""
+    columns = ["website", "facebook"]
+    samples = {
+        "website": ["https://gilbaneco.com"],
+        "facebook": ["https://facebook.com/gilbane"],
+    }
+    got = {m.source_column: m for m in map_columns(columns, "company", samples)}
+    assert got["website"].status == STATUS_AUTO_ACCEPTED
+    assert got["website"].evidence["collision"]["outcome"] == "held"
+    assert got["website"].evidence["collision"]["beat"] == ["facebook"]
+
+
+def test_equally_good_claims_on_one_field_still_go_to_review():
+    """The rule that matters is preserved: genuine ambiguity reaches a human."""
+    got = {m.source_column: m for m in map_columns(["name", "org_name"], "company", {})}
+    assert got["name"].status == STATUS_NEEDS_REVIEW
+    assert got["org_name"].status == STATUS_NEEDS_REVIEW
+    assert got["name"].evidence["collision"]["outcome"] == "contested"
+
+
+def test_a_column_that_loses_a_collision_claims_nothing():
+    """Losing means claiming no field — never being reassigned to another one.
+
+    The values are still captured as observations, so nothing is lost; what
+    must not happen is data being attributed to a field it did not win.
+    """
+    columns = ["website", "facebook"]
+    samples = {
+        "website": ["https://gilbaneco.com"],
+        "facebook": ["https://facebook.com/gilbane"],
+    }
+    got = {m.source_column: m for m in map_columns(columns, "company", samples)}
+    assert got["website"].canonical_field == "website"
+    loser = got["facebook"]
+    assert loser.canonical_field is None
+    assert loser.status == STATUS_UNMAPPED
+    assert loser.evidence["collision"]["outcome"] == "yielded"
+    assert loser.evidence["collision"]["would_have_been"] == "website"

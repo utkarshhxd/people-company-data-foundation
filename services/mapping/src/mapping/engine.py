@@ -11,7 +11,7 @@ from typing import Any
 
 from common.canonical import CANONICAL_SCHEMA_VERSION, fields_for, normalize_column_name
 
-from mapping.detectors import match_ratio
+from mapping.detectors import DISCRIMINATING_DETECTORS, match_ratio
 
 AUTO_ACCEPT_THRESHOLD = 0.90
 REVIEW_THRESHOLD = 0.60
@@ -133,7 +133,17 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
     similarities = _similarity_candidates(normalized, entity_type)
     value_based = _value_candidates(values, entity_type)
 
-    candidates = [*aliases, *similarities, *value_based]
+    # Values may *corroborate* any name-based candidate, but may only
+    # *originate* one when the detector identifies a family of field rather
+    # than merely a shape of value. Otherwise a column of numbers proposes
+    # whichever numeric field happens to carry the integer detector, which is a
+    # guess wearing the costume of evidence — and worse than no proposal,
+    # because a reviewer reading a plausible field name tends to accept it.
+    originating = [
+        c for c in value_based
+        if c.detail.get("detector") in DISCRIMINATING_DETECTORS
+    ]
+    candidates = [*aliases, *similarities, *originating]
 
     # Name evidence and value evidence agreeing is the only route by which a
     # non-exact match becomes trustworthy enough to auto-accept.
@@ -184,8 +194,33 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
                    status, evidence)
 
 
+# How decisive each kind of evidence is about *which field* a column is.
+# A curated alias naming the field outright and a detector inferring one from
+# value shape are not competing claims of equal standing, and scoring them on
+# confidence alone lets the weaker veto the stronger.
+_METHOD_RANK = {
+    "exact_alias": 3,
+    "corroborated": 2,
+    "ambiguous_alias": 1,
+    "similarity": 1,
+    "value_analysis": 0,
+}
+
+
 def _resolve_collisions(mappings: list[Mapping]) -> list[Mapping]:
-    """Two columns claiming the same field is ambiguous — send them all to review."""
+    """Settle two columns claiming the same canonical field.
+
+    Two columns making the *same kind* of claim is genuine ambiguity and every
+    claimant goes to a human — a file with both `name` and `org_name` must not
+    let the higher score silently win. But when one claimant's evidence is
+    strictly better in kind, it takes the field and the rest give it up:
+    `phone` matching the alias exactly should not be dragged into review
+    because `domain_expiration` holds digits that look phone-shaped.
+
+    A column that loses is recorded as unmapped rather than reassigned. Its
+    values are still captured as observations — nothing is lost — but claiming
+    a field it did not win would attribute data to the wrong place.
+    """
     by_field: dict[str, list[Mapping]] = {}
     for mapping in mappings:
         if mapping.canonical_field is not None:
@@ -195,16 +230,40 @@ def _resolve_collisions(mappings: list[Mapping]) -> list[Mapping]:
         if len(claimants) < 2:
             continue
         competing = [m.source_column for m in claimants]
+        best_rank = max(_METHOD_RANK.get(m.method, 0) for m in claimants)
+        winners = [m for m in claimants if _METHOD_RANK.get(m.method, 0) == best_rank]
+        # Identity, not equality: Mapping is a dataclass, so two columns that
+        # happened to produce identical mappings would compare equal and both
+        # be treated as the winner.
+        winner_ids = {id(m) for m in winners}
+
         for mapping in claimants:
-            mapping.evidence = {
-                **mapping.evidence,
-                "collision": {
-                    "canonical_field": canonical_field,
-                    "competing_columns": competing,
-                },
+            collision = {
+                "canonical_field": canonical_field,
+                "competing_columns": competing,
             }
-            if mapping.status == STATUS_AUTO_ACCEPTED:
-                mapping.status = STATUS_NEEDS_REVIEW
+            if id(mapping) in winner_ids:
+                if len(winners) > 1:
+                    # Equally good claims on the same field. Nobody wins by
+                    # score; a human decides.
+                    collision["outcome"] = "contested"
+                    mapping.evidence = {**mapping.evidence, "collision": collision}
+                    if mapping.status == STATUS_AUTO_ACCEPTED:
+                        mapping.status = STATUS_NEEDS_REVIEW
+                else:
+                    collision["outcome"] = "held"
+                    collision["beat"] = [
+                        m.source_column for m in claimants if id(m) not in winner_ids
+                    ]
+                    mapping.evidence = {**mapping.evidence, "collision": collision}
+            else:
+                collision["outcome"] = "yielded"
+                collision["lost_to"] = [m.source_column for m in winners]
+                collision["would_have_been"] = canonical_field
+                mapping.canonical_field = None
+                mapping.method = "none"
+                mapping.status = STATUS_UNMAPPED
+                mapping.evidence = {**mapping.evidence, "collision": collision}
     return mappings
 
 

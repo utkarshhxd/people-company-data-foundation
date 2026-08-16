@@ -146,6 +146,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./data:/data
+      # Measurement and maintenance scripts. Read-only: they are run against the
+      # stack, never edited from inside it.
+      - ./tools:/tools:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -174,6 +177,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./data:/data
+      - ./tools:/tools:ro
     depends_on:
       postgres:
         condition: service_healthy

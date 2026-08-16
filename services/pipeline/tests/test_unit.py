@@ -17,11 +17,12 @@ from record_pipeline.unit import (
 from validation.rules import FAIL, PASS
 
 
-def observation_tuple(source_column, canonical_field, normalized, value_index=0):
+def observation_tuple(source_column, canonical_field, normalized, value_index=0,
+                      subject="self"):
     return (
         "record-1", "batch-1", "source-1", "person", source_column,
         canonical_field, "auto_accepted", value_index, "raw", normalized,
-        "text", "text:trim", False, "2026-01-01",
+        "text", "text:trim", False, "2026-01-01", subject,
     )
 
 
@@ -135,3 +136,54 @@ def test_every_column_appears_even_with_no_values():
 def test_samples_survive_short_files(rows):
     data = [{"a": str(i)} for i in range(rows)]
     assert len(samples_from_rows(data, ["a"])["a"]) == rows
+
+
+# --------------------------------------------------------------------------
+# subject: whose attribute is this?
+# --------------------------------------------------------------------------
+
+def test_observation_dicts_carry_the_subject():
+    (obs,) = _observation_dicts([
+        observation_tuple("Company City", "city", "Gainesville", subject="employer")
+    ])
+    assert obs["subject"] == "employer"
+
+
+def test_identity_keys_are_built_from_the_person_only():
+    """An employer's phone is not a key to the person who works there.
+
+    Letting it in would build the same key for every colleague, and they would
+    all resolve to one person.
+    """
+    values = _confirmed_values([
+        {"source_column": "Email", "canonical_field": "email", "value_index": 0,
+         "normalized_value": "angela@exac.com", "subject": "self"},
+        {"source_column": "Company Phone", "canonical_field": "phone", "value_index": 0,
+         "normalized_value": "+13521234567", "subject": "employer"},
+    ])
+    assert values == {"email": ["angela@exac.com"]}
+
+
+def test_employer_values_are_reachable_on_their_own():
+    """The same observations, asked about the other subject."""
+    observations = [
+        {"source_column": "Email", "canonical_field": "email", "value_index": 0,
+         "normalized_value": "angela@exac.com", "subject": "self"},
+        {"source_column": "Company", "canonical_field": "company_name",
+         "value_index": 0, "normalized_value": "Exac", "subject": "employer"},
+        {"source_column": "Domain", "canonical_field": "website", "value_index": 0,
+         "normalized_value": "exac.com", "subject": "employer"},
+    ]
+    assert _confirmed_values(observations, "employer") == {
+        "company_name": ["Exac"],
+        "website": ["exac.com"],
+    }
+
+
+def test_an_observation_without_a_subject_is_the_record_s_own():
+    """Rows written before subjects existed are about the record itself."""
+    values = _confirmed_values([
+        {"source_column": "Email", "canonical_field": "email", "value_index": 0,
+         "normalized_value": "x@y.com"},
+    ])
+    assert values == {"email": ["x@y.com"]}

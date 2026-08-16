@@ -77,6 +77,16 @@ DETECTORS = {
 # proper use: the column is *called* phone and the values are phone-shaped.
 DISCRIMINATING_DETECTORS = frozenset({"email", "linkedin", "url"})
 
+# Some detectors are strictly narrower than others: every LinkedIn URL is a
+# URL, so both match and both would propose a field at the same capped
+# confidence, leaving the winner to sort order. The narrower match is the more
+# informative one and takes precedence.
+DETECTOR_SPECIFICITY = {
+    "linkedin": 2,
+    "email": 2,
+    "url": 1,
+}
+
 
 def match_ratio(detector: str, values: list[str]) -> float:
     """Fraction of non-empty values matching the detector. 0.0 when nothing to judge."""

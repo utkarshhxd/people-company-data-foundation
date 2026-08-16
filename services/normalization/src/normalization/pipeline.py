@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from common.canonical import (
     CANONICAL_SCHEMA_VERSION,
+    SELF,
     column_fingerprint,
     field_by_name,
 )
@@ -38,10 +39,12 @@ class NormalizeResult:
     counts: dict[str, int]
 
 
-def _value_type_for(entity_type: str, canonical_field: str | None) -> str:
+def _value_type_for(
+    entity_type: str, canonical_field: str | None, subject: str = SELF
+) -> str:
     if canonical_field is None:
         return "text"
-    spec = field_by_name(entity_type, canonical_field)
+    spec = field_by_name(entity_type, canonical_field, subject)
     return spec.value_type if spec else "text"
 
 
@@ -56,19 +59,23 @@ def observations_for_record(
         status = mapping["mapping_status"] if mapping else "unmapped"
         # Only a confirmed mapping labels the value as canonical. An unreviewed
         # guess still gets stored — it just isn't presented as truth.
-        canonical_field = (
-            mapping["canonical_field"]
-            if mapping and mapping["mapping_status"] in repository.ACCEPTED_MAPPING_STATUSES
-            else None
+        confirmed = (
+            mapping is not None
+            and mapping["mapping_status"] in repository.ACCEPTED_MAPPING_STATUSES
         )
-        value_type = _value_type_for(entity_type, canonical_field)
+        canonical_field = mapping["canonical_field"] if confirmed else None
+        # Whose attribute this is. An unconfirmed mapping has no canonical field
+        # and therefore no subject to speak of, so it records the record's own —
+        # nothing downstream reads a subject without a field beside it.
+        subject = mapping.get("subject", SELF) if confirmed else SELF
+        value_type = _value_type_for(entity_type, canonical_field, subject)
 
         # A missing cell is still an observation: the source said nothing here.
         if raw is None:
             rows.append((
                 record_id, batch_id, source_id, entity_type, source_column,
                 canonical_field, status, 0, "", None, value_type,
-                f"{value_type}:absent", True, observed_at,
+                f"{value_type}:absent", True, observed_at, subject,
             ))
             continue
 
@@ -78,7 +85,7 @@ def observations_for_record(
             rows.append((
                 record_id, batch_id, source_id, entity_type, source_column,
                 canonical_field, status, index, part, result.normalized_value,
-                value_type, result.method, result.is_null_token, observed_at,
+                value_type, result.method, result.is_null_token, observed_at, subject,
             ))
     return rows
 

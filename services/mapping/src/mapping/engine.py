@@ -9,9 +9,18 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
-from common.canonical import CANONICAL_SCHEMA_VERSION, fields_for, normalize_column_name
+from common.canonical import (
+    CANONICAL_SCHEMA_VERSION,
+    SELF,
+    fields_for,
+    normalize_column_name,
+)
 
-from mapping.detectors import DISCRIMINATING_DETECTORS, match_ratio
+from mapping.detectors import (
+    DETECTOR_SPECIFICITY,
+    DISCRIMINATING_DETECTORS,
+    match_ratio,
+)
 
 AUTO_ACCEPT_THRESHOLD = 0.90
 REVIEW_THRESHOLD = 0.60
@@ -38,6 +47,10 @@ class Candidate:
     method: str
     confidence: float
     detail: dict[str, Any] = field(default_factory=dict)
+    # Whose attribute this candidate would make the column. Two candidates
+    # naming the same field for different subjects are different answers, not
+    # competing ones.
+    subject: str = SELF
 
 
 @dataclass
@@ -49,17 +62,17 @@ class Mapping:
     status: str
     evidence: dict[str, Any]
     schema_version: str = CANONICAL_SCHEMA_VERSION
+    subject: str = SELF
 
 
 def _alias_candidates(normalized: str, entity_type: str) -> list[Candidate]:
     out = []
     for spec in fields_for(entity_type):
-        names = {normalize_column_name(spec.name)} | {
-            normalize_column_name(alias) for alias in spec.aliases
-        }
+        names = {normalize_column_name(name) for name in spec.match_names}
         if normalized in names:
             out.append(
-                Candidate(spec.name, "exact_alias", 1.0, {"matched_alias": normalized})
+                Candidate(spec.name, "exact_alias", 1.0,
+                          {"matched_alias": normalized}, spec.subject)
             )
             continue
         # Plausible but not certain: propose the field, but capped below the
@@ -73,6 +86,7 @@ def _alias_candidates(normalized: str, entity_type: str) -> list[Candidate]:
                     AMBIGUOUS_ALIAS_CONFIDENCE,
                     {"matched_ambiguous_alias": normalized,
                      "note": "alias is plausible but not decisive; needs confirmation"},
+                    spec.subject,
                 )
             )
     return out
@@ -82,7 +96,10 @@ def _similarity_candidates(normalized: str, entity_type: str) -> list[Candidate]
     out = []
     for spec in fields_for(entity_type):
         best_ratio, best_against = 0.0, ""
-        for target in {spec.name, *spec.aliases}:
+        # match_names, not the raw name: an employer field is reachable only
+        # through its qualified aliases, and fuzzy matching its bare name would
+        # let 'city' half-match the employer's city as well as the person's.
+        for target in spec.match_names:
             ratio = SequenceMatcher(None, normalized, normalize_column_name(target)).ratio()
             if ratio > best_ratio:
                 best_ratio, best_against = ratio, target
@@ -93,6 +110,7 @@ def _similarity_candidates(normalized: str, entity_type: str) -> list[Candidate]
                     "similarity",
                     round(best_ratio, 3),
                     {"closest_to": best_against, "ratio": round(best_ratio, 3)},
+                    spec.subject,
                 )
             )
     return out
@@ -114,6 +132,7 @@ def _value_candidates(values: list[str], entity_type: str) -> list[Candidate]:
                     round(min(VALUE_ANALYSIS_CAP, ratio), 3),
                     {"detector": spec.detector, "match_ratio": round(ratio, 3),
                      "sampled": len(values)},
+                    spec.subject,
                 )
             )
     return out
@@ -139,17 +158,33 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
     # whichever numeric field happens to carry the integer detector, which is a
     # guess wearing the costume of evidence — and worse than no proposal,
     # because a reviewer reading a plausible field name tends to accept it.
+    # Values also never reveal *whose* attribute something is: a phone number
+    # looks identical whether it is the person's or their employer's. So an
+    # employer field is reachable only by a name that says so, never by values.
     originating = [
         c for c in value_based
-        if c.detail.get("detector") in DISCRIMINATING_DETECTORS
+        if c.detail.get("detector") in DISCRIMINATING_DETECTORS and c.subject == SELF
     ]
+    # Keep only the narrowest kind of match that fired. A LinkedIn URL matches
+    # the url detector too, and letting both propose leaves a real signal tied
+    # with a vaguer one at the same capped confidence.
+    if originating:
+        finest = max(
+            DETECTOR_SPECIFICITY.get(c.detail.get("detector"), 0) for c in originating
+        )
+        originating = [
+            c for c in originating
+            if DETECTOR_SPECIFICITY.get(c.detail.get("detector"), 0) == finest
+        ]
     candidates = [*aliases, *similarities, *originating]
 
     # Name evidence and value evidence agreeing is the only route by which a
-    # non-exact match becomes trustworthy enough to auto-accept.
-    by_value = {c.canonical_field: c for c in value_based}
+    # non-exact match becomes trustworthy enough to auto-accept. Keyed by field
+    # *and* subject, so the employer's website cannot be corroborated by values
+    # that were evidence for the person's own.
+    by_value = {(c.canonical_field, c.subject): c for c in value_based}
     for candidate in [*aliases, *similarities]:
-        corroborator = by_value.get(candidate.canonical_field)
+        corroborator = by_value.get((candidate.canonical_field, candidate.subject))
         # An ambiguous alias is excluded: values can confirm a column's TYPE but
         # never resolve which field an ambiguous name meant, so corroboration
         # must not be allowed to push it over the auto-accept line.
@@ -162,6 +197,7 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
                     "corroborated",
                     round(min(0.95, candidate.confidence + CORROBORATION_BOOST), 3),
                     {**candidate.detail, **corroborator.detail, "corroborated": True},
+                    candidate.subject,
                 )
             )
 
@@ -180,9 +216,10 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
         status = STATUS_NEEDS_REVIEW
 
     alternatives = [
-        {"canonical_field": c.canonical_field, "method": c.method, "confidence": c.confidence}
+        {"canonical_field": c.canonical_field, "method": c.method,
+         "confidence": c.confidence, "subject": c.subject}
         for c in candidates[1 : MAX_ALTERNATIVES + 1]
-        if c.canonical_field != best.canonical_field
+        if (c.canonical_field, c.subject) != (best.canonical_field, best.subject)
     ]
     evidence = {**best.detail, "alternatives": alternatives}
 
@@ -191,7 +228,7 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
         return Mapping(source_column, None, "none", best.confidence, status, evidence)
 
     return Mapping(source_column, best.canonical_field, best.method, best.confidence,
-                   status, evidence)
+                   status, evidence, subject=best.subject)
 
 
 # How decisive each kind of evidence is about *which field* a column is.
@@ -221,12 +258,17 @@ def _resolve_collisions(mappings: list[Mapping]) -> list[Mapping]:
     values are still captured as observations — nothing is lost — but claiming
     a field it did not win would attribute data to the wrong place.
     """
-    by_field: dict[str, list[Mapping]] = {}
+    # Keyed by field *and* subject. 'City' and 'Company City' both answer
+    # `city`, and they are not in competition — they describe different
+    # subjects, and both values must survive.
+    by_field: dict[tuple[str, str], list[Mapping]] = {}
     for mapping in mappings:
         if mapping.canonical_field is not None:
-            by_field.setdefault(mapping.canonical_field, []).append(mapping)
+            by_field.setdefault((mapping.canonical_field, mapping.subject), []).append(
+                mapping
+            )
 
-    for canonical_field, claimants in by_field.items():
+    for (canonical_field, subject), claimants in by_field.items():
         if len(claimants) < 2:
             continue
         competing = [m.source_column for m in claimants]
@@ -240,6 +282,7 @@ def _resolve_collisions(mappings: list[Mapping]) -> list[Mapping]:
         for mapping in claimants:
             collision = {
                 "canonical_field": canonical_field,
+                "subject": subject,
                 "competing_columns": competing,
             }
             if id(mapping) in winner_ids:
@@ -263,6 +306,7 @@ def _resolve_collisions(mappings: list[Mapping]) -> list[Mapping]:
                 mapping.canonical_field = None
                 mapping.method = "none"
                 mapping.status = STATUS_UNMAPPED
+                mapping.subject = SELF
                 mapping.evidence = {**mapping.evidence, "collision": collision}
     return mappings
 

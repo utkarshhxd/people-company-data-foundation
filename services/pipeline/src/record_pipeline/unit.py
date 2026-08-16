@@ -82,7 +82,7 @@ def _observation_dicts(tuples: list[tuple]) -> list[dict]:
     for row in tuples:
         (record_id, _batch_id, _source_id, _entity_type, source_column,
          canonical_field, _status, value_index, raw_value, normalized_value,
-         value_type, method, is_null_token, _observed_at) = row
+         value_type, method, is_null_token, _observed_at, subject) = row
         out.append({
             "observation_id": uuid7(),
             "record_id": record_id,
@@ -94,22 +94,31 @@ def _observation_dicts(tuples: list[tuple]) -> list[dict]:
             "value_type": value_type,
             "normalization_method": method,
             "is_null_token": is_null_token,
+            "subject": subject,
         })
     return out
 
 
-def _confirmed_values(observations: list[dict]) -> dict[str, list[str]]:
-    """Confirmed canonical field -> normalized values.
+def _confirmed_values(
+    observations: list[dict], subject: str = "self"
+) -> dict[str, list[str]]:
+    """Confirmed canonical field -> normalized values, for one subject.
 
     Sorted by (source_column, value_index) to match resolution's own query
     exactly. Identity keys are built from these in order, so a different order
     could build a different key from the same record — the per-record path
     producing different entities than the batch path is precisely the failure
     this ordering prevents.
+
+    Filtering by subject is what keeps a person's identity keys built from the
+    person's own attributes. An employer's phone number is not a key to the
+    person, and letting it in would link colleagues to each other.
     """
     values: dict[str, list[str]] = {}
     for obs in sorted(observations, key=lambda o: (o["source_column"], o["value_index"])):
         if obs["canonical_field"] is None or obs["normalized_value"] is None:
+            continue
+        if obs.get("subject", "self") != subject:
             continue
         values.setdefault(obs["canonical_field"], []).append(obs["normalized_value"])
     return values
@@ -177,7 +186,8 @@ def process(
              ctx.entity_type, obs["source_column"], obs["canonical_field"],
              _mapping_status(ctx, obs["source_column"]), obs["value_index"],
              obs["raw_value"], obs["normalized_value"], obs["value_type"],
-             obs["normalization_method"], obs["is_null_token"], observed_at)
+             obs["normalization_method"], obs["is_null_token"], observed_at,
+             obs["subject"])
             for obs in observations
         ])
         validation_repo.insert_results(conn, verdict.result_rows)

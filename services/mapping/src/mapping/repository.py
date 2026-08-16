@@ -97,8 +97,8 @@ def insert_mappings(conn: psycopg.Connection, source_schema_id: str, mappings) -
             """
             INSERT INTO column_mapping (source_schema_id, source_column, canonical_field,
                                         mapping_method, mapping_confidence, mapping_status,
-                                        evidence, schema_version)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                        evidence, schema_version, subject)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_schema_id, source_column) DO NOTHING
             """,
             [
@@ -111,6 +111,7 @@ def insert_mappings(conn: psycopg.Connection, source_schema_id: str, mappings) -
                     m.status,
                     Json(m.evidence),
                     m.schema_version,
+                    m.subject,
                 )
                 for m in mappings
             ],

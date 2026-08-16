@@ -120,8 +120,65 @@ def test_source_own_id_is_captured_as_external_id():
 def test_company_entity_uses_company_vocabulary():
     mapping = map_column("website", "company", [])
     assert mapping.canonical_field == "website"
-    # 'website' is not a person field, so the person vocabulary must not match it.
-    assert map_column("website", "person", []).canonical_field != "website"
+    assert mapping.subject == "self"
+
+
+def test_a_website_on_a_person_row_belongs_to_the_employer():
+    """A person does not have a website; the company they work for does.
+
+    So the column still maps to the company field `website` — but as an
+    attribute of a different subject, which is what sends it to the employer's
+    entity rather than the person's.
+    """
+    mapping = map_column("website", "person", [])
+    assert mapping.canonical_field == "website"
+    assert mapping.subject == "employer"
+
+
+def test_an_unqualified_column_belongs_to_the_person():
+    """The employer must never take a column that did not say it was theirs."""
+    for column in ("city", "state", "phone", "address"):
+        assert map_column(column, "person", []).subject == "self"
+
+
+def test_a_company_qualified_column_belongs_to_the_employer():
+    for column, expected in (
+        ("Company City", "city"),
+        ("Company State", "state_region"),
+        ("Company Phone", "phone"),
+        ("Company Address", "address_line1"),
+        ("# Employees", "employee_count"),
+    ):
+        mapping = map_column(column, "person", [])
+        assert mapping.canonical_field == expected, column
+        assert mapping.subject == "employer", column
+
+
+def test_person_and_employer_can_claim_the_same_field_without_colliding():
+    """'City' and 'Company City' are different facts, not competing answers."""
+    got = {m.source_column: m for m in map_columns(["City", "Company City"], "person", {})}
+    assert got["City"].canonical_field == "city"
+    assert got["City"].subject == "self"
+    assert got["City"].status == STATUS_AUTO_ACCEPTED
+    assert got["Company City"].canonical_field == "city"
+    assert got["Company City"].subject == "employer"
+    assert got["Company City"].status == STATUS_AUTO_ACCEPTED
+
+
+def test_a_vendor_shipping_six_phone_columns_keeps_all_six():
+    """Apollo ships six. Collapsing them onto one field would lose five."""
+    columns = ["First Phone", "Work Direct Phone", "Home Phone", "Mobile Phone",
+               "Corporate Phone", "Other Phone", "Company Phone"]
+    got = {m.source_column: (m.canonical_field, m.subject)
+           for m in map_columns(columns, "person", {})}
+    assert got["First Phone"] == ("phone", "self")
+    assert got["Mobile Phone"] == ("mobile_phone", "self")
+    assert got["Home Phone"] == ("home_phone", "self")
+    assert got["Other Phone"] == ("other_phone", "self")
+    assert got["Company Phone"] == ("phone", "employer")
+    # Two names for the same idea genuinely contest one field.
+    assert got["Work Direct Phone"][0] == "work_phone"
+    assert got["Corporate Phone"][0] == "work_phone"
 
 
 def test_shape_detector_alone_does_not_propose_a_field():
@@ -132,7 +189,7 @@ def test_shape_detector_alone_does_not_propose_a_field():
     field arbitrarily, and a plausible-looking proposal is worse than none
     because a reviewer tends to accept it.
     """
-    mapping = map_column("instagram_followers", "company", ["1200", "845", "23110"])
+    mapping = map_column("googlereviewscount", "company", ["1200", "845", "23110"])
     assert mapping.canonical_field != "employee_count"
     assert mapping.status == STATUS_UNMAPPED
 
@@ -176,15 +233,15 @@ def test_a_shape_guess_never_reaches_the_collision_at_all():
 
 def test_exact_alias_holds_the_field_against_a_value_based_claim():
     """When a collision does form, the better kind of evidence takes the field."""
-    columns = ["website", "facebook"]
+    columns = ["website", "g_maps"]
     samples = {
         "website": ["https://gilbaneco.com"],
-        "facebook": ["https://facebook.com/gilbane"],
+        "g_maps": ["https://maps.google.com/?cid=123"],
     }
     got = {m.source_column: m for m in map_columns(columns, "company", samples)}
     assert got["website"].status == STATUS_AUTO_ACCEPTED
     assert got["website"].evidence["collision"]["outcome"] == "held"
-    assert got["website"].evidence["collision"]["beat"] == ["facebook"]
+    assert got["website"].evidence["collision"]["beat"] == ["g_maps"]
 
 
 def test_equally_good_claims_on_one_field_still_go_to_review():
@@ -201,14 +258,14 @@ def test_a_column_that_loses_a_collision_claims_nothing():
     The values are still captured as observations, so nothing is lost; what
     must not happen is data being attributed to a field it did not win.
     """
-    columns = ["website", "facebook"]
+    columns = ["website", "domain_nameserver"]
     samples = {
         "website": ["https://gilbaneco.com"],
-        "facebook": ["https://facebook.com/gilbane"],
+        "domain_nameserver": ["ns1.cloudflare.com", "ns2.cloudflare.com"],
     }
     got = {m.source_column: m for m in map_columns(columns, "company", samples)}
     assert got["website"].canonical_field == "website"
-    loser = got["facebook"]
+    loser = got["domain_nameserver"]
     assert loser.canonical_field is None
     assert loser.status == STATUS_UNMAPPED
     assert loser.evidence["collision"]["outcome"] == "yielded"

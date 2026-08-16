@@ -27,7 +27,7 @@ def get_column_mappings(
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT source_column, canonical_field, mapping_status
+            SELECT source_column, canonical_field, mapping_status, subject
             FROM column_mapping WHERE source_schema_id = %s
             """,
             (source_schema_id,),
@@ -88,21 +88,24 @@ def insert_observations(conn: psycopg.Connection, rows: list[tuple]) -> int:
                 record_id, batch_id, source_id, entity_type, source_column,
                 canonical_field, mapping_status, value_index, raw_value,
                 normalized_value, value_type, normalization_method,
-                is_null_token, observed_at
+                is_null_token, observed_at, subject
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             -- raw_value and observed_at are deliberately NOT updated: they are
             -- what the source said, and that never changes. Everything else here
             -- is derived, and must be refreshable — otherwise approving a
             -- mapping would never reach batches that were already normalized,
             -- and human review would be pointless for anything but new files.
+            -- subject is derived too: a reviewer correcting 'Company City' is
+            -- correcting whose attribute it is as much as which field.
             ON CONFLICT (record_id, source_column, value_index) DO UPDATE SET
                 canonical_field      = EXCLUDED.canonical_field,
                 mapping_status       = EXCLUDED.mapping_status,
                 normalized_value     = EXCLUDED.normalized_value,
                 value_type           = EXCLUDED.value_type,
                 normalization_method = EXCLUDED.normalization_method,
-                is_null_token        = EXCLUDED.is_null_token
+                is_null_token        = EXCLUDED.is_null_token,
+                subject              = EXCLUDED.subject
             """,
             rows,
         )
@@ -128,16 +131,17 @@ def insert_observations_with_ids(conn: psycopg.Connection, rows: list[tuple]) ->
                 observation_id, record_id, batch_id, source_id, entity_type,
                 source_column, canonical_field, mapping_status, value_index,
                 raw_value, normalized_value, value_type, normalization_method,
-                is_null_token, observed_at
+                is_null_token, observed_at, subject
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (record_id, source_column, value_index) DO UPDATE SET
                 canonical_field      = EXCLUDED.canonical_field,
                 mapping_status       = EXCLUDED.mapping_status,
                 normalized_value     = EXCLUDED.normalized_value,
                 value_type           = EXCLUDED.value_type,
                 normalization_method = EXCLUDED.normalization_method,
-                is_null_token        = EXCLUDED.is_null_token
+                is_null_token        = EXCLUDED.is_null_token,
+                subject              = EXCLUDED.subject
             """,
             rows,
         )

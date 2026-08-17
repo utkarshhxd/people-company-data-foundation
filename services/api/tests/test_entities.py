@@ -9,6 +9,7 @@ end-to-end verification, because a stub cannot tell you whether a join is right.
 from datetime import UTC, datetime
 
 import pytest
+from api_service.auth import ENV_ALLOW_UNAUTH
 from api_service.main import app
 from common import lineage
 from fastapi.testclient import TestClient
@@ -17,6 +18,18 @@ client = TestClient(app)
 
 NOW = datetime(2026, 8, 13, tzinfo=UTC)
 ENTITY = "019ff9ac-dc79-749b-9b84-6e5e19fc03a4"
+
+
+@pytest.fixture(autouse=True)
+def _serve_without_a_key(monkeypatch):
+    """Declare that these tests are about the routes, not the gate in front.
+
+    Without this every request here is refused before it reaches a handler,
+    because TestClient does not present a loopback address and no keys are
+    configured. Which is the correct behaviour -- test_auth.py covers it -- and
+    the reason it is opted out of explicitly here rather than worked around.
+    """
+    monkeypatch.setenv(ENV_ALLOW_UNAUTH, "true")
 
 
 @pytest.fixture

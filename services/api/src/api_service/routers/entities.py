@@ -13,9 +13,13 @@ create records nothing can explain.
 from typing import Annotated
 
 from common import lineage
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
-router = APIRouter(tags=["entities"])
+from api_service.auth import require_api_key
+
+# Applied to the router rather than to each route, so a route added later is
+# protected by default. Health checks live on their own router and stay open.
+router = APIRouter(tags=["entities"], dependencies=[Depends(require_api_key)])
 
 EntityId = Annotated[str, Path(description="Person or company id (merged ids resolve)")]
 

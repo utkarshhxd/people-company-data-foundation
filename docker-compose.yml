@@ -330,6 +330,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Comma-separated. Set these and every /entities and /records route
+      # requires a key; health and /metrics stay open for probes.
+      PCDF_API_KEYS: ${PCDF_API_KEYS:-}
+      # Requests reach this container from the Docker bridge, not 127.0.0.1, so
+      # the loopback exemption does not cover curl from the host. Local-first
+      # development therefore opts out explicitly, and the API says so on every
+      # start rather than leaving it to be inferred.
+      PCDF_ALLOW_UNAUTHENTICATED: ${PCDF_ALLOW_UNAUTHENTICATED:-}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

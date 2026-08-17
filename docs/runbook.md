@@ -1,0 +1,295 @@
+# Runbook
+
+Operational procedures for the People & Company Data Foundation. Written for
+someone who did not build it.
+
+Every command runs from the repository root. **Use PowerShell, not Git Bash** —
+Git Bash rewrites container paths like `/data/inbox/x.csv` into Windows paths.
+
+---
+
+## Where things are
+
+| | |
+|---|---|
+| Postgres | `localhost:5433` (**not** 5432), db `pcdf`, user `pcdf_dev` |
+| API | http://localhost:8000 — docs at `/docs` |
+| Grafana | http://localhost:3001 — "Data Foundation" dashboard |
+| Prometheus | http://localhost:9090 |
+| Data | Docker volume `pcdf_postgres-data` |
+
+Postgres is on 5433 so it cannot clash with a native install on 5432. Grafana is
+on 3001 because 3000 is the port every Node dev server wants; when it is taken,
+Docker Desktop can leave the container up and healthy but unreachable from the
+host rather than failing loudly.
+
+> **`docker compose down -v` destroys every record.** The `-v` removes the
+> volumes. `docker compose down` on its own is safe.
+
+---
+
+## Is it healthy?
+
+```powershell
+docker compose ps                                   # every service (healthy)
+curl.exe -s http://localhost:8000/health/ready      # checks Postgres + Kafka
+curl.exe -s http://localhost:8000/metrics | Select-String "^pcdf_"
+```
+
+`pcdf_metrics_up 0` means the API is running but cannot reach Postgres. The
+endpoint deliberately still returns 200 with no stale gauges — monitoring that
+dies with the database is useless exactly when it is needed.
+
+**Check the data is internally consistent** — twelve reconciliation checks,
+each returning rows only on failure, so all-empty is the pass:
+
+```powershell
+docker compose cp tools/verify.sql postgres:/tmp/verify.sql
+docker compose exec -T postgres psql -U pcdf_dev -d pcdf -f /tmp/verify.sql
+```
+
+---
+
+## Backup and restore
+
+### Take a backup
+
+```powershell
+docker compose exec -T postgres sh /tools/backup.sh /tmp/backups
+docker compose cp postgres:/tmp/backups ./backups     # copy off the container
+```
+
+Custom format, so it compresses and can be restored selectively. The script
+refuses to report success until `pg_restore` has parsed what it just wrote: the
+failure that matters is not a backup that did not run, which is noisy, but one
+that ran and produced something unrestorable, which is silent until it is
+needed.
+
+### Verify a backup — do this, not just the backup
+
+```powershell
+docker compose exec -T postgres sh /tools/restore_check.sh /tmp/backups/pcdf-<stamp>.dump
+```
+
+Restores into a scratch database, compares every table's row count against the
+live one, checks the views came back, then drops the scratch. Safe to run any
+day — it never touches the live database. `--keep` leaves the scratch for
+inspection.
+
+### Restore for real
+
+Only after `restore_check.sh` has passed on the file you intend to use.
+
+```powershell
+docker compose stop api mapping normalization validation resolution golden
+docker compose exec -T postgres psql -U pcdf_dev -d postgres -c "DROP DATABASE pcdf;"
+docker compose exec -T postgres psql -U pcdf_dev -d postgres -c "CREATE DATABASE pcdf;"
+docker compose exec -T postgres pg_restore -U pcdf_dev -d pcdf --exit-on-error --no-owner /tmp/backups/pcdf-<stamp>.dump
+docker compose up -d
+```
+
+Consumers are stopped first because they would otherwise write into a database
+that is being replaced underneath them.
+
+---
+
+## Loading data
+
+```powershell
+docker compose run --rm pipeline process run /data/inbox/file.csv `
+  --entity-type person --source-name vendor_x --reliability 0.8
+```
+
+Exit codes: `0` fine · `2` bad input · `3` already loaded (use
+`--allow-reingest`) · `5` finished, but some rows failed.
+
+**Exit 5 is not a crash.** It means the run processed what it could and recorded
+the rest. Check what failed with `process errors`. A scheduled load that quietly
+drops rows is how data goes missing, so a partially successful run still exits
+non-zero.
+
+For a large file, sample it first — a layout is proven by a sample; only volume
+needs the whole file:
+
+```powershell
+docker compose run --rm pipeline python /tools/sample_file.py /tf/big.xlsx /data/inbox/samples --rows 1000
+docker compose run --rm pipeline python /tools/mapping_coverage.py   # what needs review first
+```
+
+---
+
+## When something is wrong
+
+### A batch is stuck `running`
+
+A process died mid-load. The rows it wrote are complete and stay; the batch just
+never got marked finished, and the duplicate guard will block re-loading that
+file until it is released.
+
+```powershell
+docker compose run --rm pipeline process abandon <batch-id>
+```
+
+Only ever marks it `failed`. It never deletes rows.
+
+### Rows failed to process
+
+```powershell
+docker compose run --rm pipeline process errors
+```
+
+Payloads are kept byte-exact. Once the cause is fixed, replay them:
+
+```powershell
+docker compose run --rm pipeline process reprocess --batch-id <id> --reviewed-by you
+```
+
+`record_error` is **not** quarantine. Quarantine holds records the pipeline
+understood and judged unusable. `record_error` holds records it could not
+process at all — one is a verdict about the data, the other is a failure of
+ours.
+
+### A consumer is not keeping up, or is stuck
+
+```powershell
+docker compose logs mapping --tail 50
+docker compose restart mapping
+```
+
+Offsets commit only after work completes, so a restart reprocesses at most the
+in-flight batch. Every stage is idempotent; replaying writes nothing new.
+
+### The database is filling the disk
+
+Observations dominate: roughly one row per source column per record, about
+0.9 KB each. 190,000 records of a 52-column file is ~10 GB.
+
+```sql
+SELECT relname, pg_size_pretty(pg_total_relation_size(relid))
+FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 10;
+```
+
+Benchmark or demo data can be removed by source name — and only by source name:
+
+```powershell
+docker compose run --rm pipeline python /tools/purge_source.py <source_name>
+```
+
+> Nothing else in the system deletes source data, by design. Invalid records
+> must not disappear. Take a backup first.
+
+---
+
+## Work that needs a human
+
+```sql
+SELECT 'mapping needs review' AS queue, count(*) FROM column_mapping WHERE mapping_status='needs_review'
+UNION ALL SELECT 'quarantined records', count(*) FROM quarantine_item WHERE status='open'
+UNION ALL SELECT 'possible duplicates', count(*) FROM match_candidate WHERE status='open'
+UNION ALL SELECT 'failed rows', count(*) FROM record_error WHERE status='open';
+```
+
+None of these are errors. They are the decisions the system deliberately
+refused to make on its own.
+
+**The age of a queue matters more than its depth.** A backlog of three is fine;
+a backlog of three that has been three for a fortnight is a process failure, and
+no count alone reveals that. Alert on
+`pcdf_oldest_open_quarantine_age_seconds` and
+`pcdf_oldest_unreviewed_mapping_age_seconds`, not on the counts.
+
+### Approve a column mapping
+
+```powershell
+docker compose run --rm mapping review-mappings list --status needs_review
+docker compose run --rm mapping review-mappings set --mapping-id <id> `
+  --canonical-field person_external_id --reviewed-by you
+```
+
+Stored against the column layout, not the file, so the correction is reused
+every future time that source sends the same columns.
+
+### Release or reject a quarantined record
+
+```powershell
+docker compose run --rm validation quarantine show --record-id <id>
+docker compose run --rm validation quarantine release --record-id <id> --reviewed-by you --note "why"
+docker compose run --rm validation quarantine reject  --record-id <id> --reviewed-by you --note "why"
+```
+
+Releasing does not re-trigger resolution. Re-run it for that batch:
+
+```powershell
+docker compose run --rm resolution resolve run --batch-id <id>
+```
+
+### Accept or reject a possible duplicate
+
+```powershell
+docker compose run --rm resolution resolve candidates
+docker compose run --rm resolution resolve accept --candidate-id <id> --reviewed-by you --note "why"
+```
+
+Accepting merges. **Merging never deletes an id** — the absorbed entity becomes
+a tombstone pointing at the survivor, so any id already handed out still
+resolves. Rebuild the survivor's golden values afterwards:
+
+```powershell
+docker compose run --rm golden golden build --entity-id <surviving-id>
+```
+
+---
+
+## Answering "why does this say that?"
+
+```powershell
+curl.exe "http://localhost:8000/entities/<id>/explain/company_name"
+docker compose run --rm golden golden explain --entity-id <id> --field address_line1
+```
+
+Walks a trusted value back to the source cell: which vendor, which file, which
+row, which column, and what it literally said — with all five confidence
+dimensions side by side and never summed.
+
+`tools/queries.sql` has ten worked examples for pgAdmin.
+
+---
+
+## Changing the rules
+
+Golden records are derived, never authored, so changing a survivorship or
+confidence rule needs no migration — only a recalculation:
+
+```powershell
+docker compose run --rm pipeline python /tools/rebuild_golden.py --dry-run
+docker compose run --rm pipeline python /tools/rebuild_golden.py
+```
+
+Rebuilding is idempotent: an unchanged value keeps its `valid_from`, so
+`valid_from` means "since when has this been true", not "when did the builder
+last run".
+
+Changing the **canonical schema** is different — bump `CANONICAL_SCHEMA_VERSION`
+in `libs/common/src/common/canonical.py`. Stored mappings record the version
+they were made against, so old ones stay valid for their version and new files
+get the new vocabulary.
+
+---
+
+## Exposing this beyond localhost
+
+Not ready. Before it is:
+
+1. **Set `PCDF_API_KEYS`** and remove `PCDF_ALLOW_UNAUTHENTICATED` from `.env`.
+   With neither set the API refuses non-loopback requests, which is the safe
+   default but not a configuration.
+2. **Move credentials out of `.env`** into a real secret store. They are
+   plaintext on disk today.
+3. **Add TLS.** Keys sent over plain HTTP are keys published.
+4. **Add alert rules.** The dashboard makes failures visible; nothing pages
+   anyone.
+5. **Fix concurrent golden building** (ADR 0012 follow-up). Two processes
+   building the same entity violate the single-current-value index.
+
+The API is read-only, which limits the damage but not the disclosure: what it
+serves is personal data with provenance attached.

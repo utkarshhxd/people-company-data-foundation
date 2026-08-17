@@ -1,5 +1,11 @@
 .env
 
+# Database dumps. They contain everything the database does, which is every
+# vendor's personal data plus its provenance -- a backup is the single most
+# concentrated copy of it that exists.
+backups/
+*.dump
+
 # Real vendor exports used to exercise the pipeline at production scale.
 # Never committed: they are ~184 MB and contain real personal data (consumer
 # names, home addresses, phone numbers, email addresses, IP addresses).

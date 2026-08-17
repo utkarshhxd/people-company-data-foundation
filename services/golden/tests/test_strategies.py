@@ -177,3 +177,75 @@ def test_a_single_source_is_uncontested_not_unanimous():
     assert choice.supporting_sources == 1
     assert choice.competing_values == 1
     assert choice.evidence["alternatives"] == []
+
+
+# --------------------------------------------------------------------------
+# confidence counts sources, not values
+# --------------------------------------------------------------------------
+
+def test_one_vendor_disagreeing_with_itself_costs_one_penalty():
+    """An employer named by a thousand of its own contacts is still one vendor.
+
+    Apollo supplies its 1,247 AdventHealth contacts with 760 slightly different
+    company ids. Counting distinct values made that 759 contradictions and drove
+    confidence to the floor, so the best-attested company in the database read
+    as the least certain. It is one vendor being inconsistent with itself.
+    """
+    observations = [obs(f"id-{i}", "apollo", reliability=0.85) for i in range(200)]
+    choice = choose("company", "company_external_id", observations)
+    # 200 distinct values, but only one source, so one penalty.
+    assert choice.competing_values == 200
+    assert choice.confidence == pytest.approx(0.75, abs=0.001)
+
+
+def test_two_vendors_disagreeing_costs_two():
+    """A genuine conflict between sources is what confidence should reflect."""
+    observations = [
+        obs("Acme Ltd", "vendor_a", reliability=0.9),
+        obs("Acme Limited", "vendor_b", reliability=0.5),
+        obs("ACME", "vendor_c", reliability=0.5),
+    ]
+    choice = choose("company", "legal_name", observations)
+    assert choice.value == "Acme Ltd"
+    # Two other sources dissent: 0.9 - 0.10 - 0.10
+    assert choice.confidence == pytest.approx(0.70, abs=0.001)
+
+
+def test_unanimous_sources_are_not_penalised():
+    observations = [
+        obs("Acme", "vendor_a", reliability=0.7),
+        obs("Acme", "vendor_b", reliability=0.7),
+    ]
+    choice = choose("company", "legal_name", observations)
+    # One agreeing source beyond the winner, nobody dissenting.
+    assert choice.supporting_sources == 2
+    assert choice.confidence == pytest.approx(0.85, abs=0.001)
+
+
+def test_a_source_backing_the_winner_does_not_also_count_against_it():
+    """A vendor that reported the winner AND something else still dissents once.
+
+    It is not double-counted, and it is not excused either: it did report a
+    competing value, and that is worth one penalty however many it reported.
+    """
+    observations = [
+        obs("Acme", "vendor_a", reliability=0.8),
+        obs("Acme Corp", "vendor_a", reliability=0.8),
+        obs("Acme", "vendor_b", reliability=0.6),
+    ]
+    choice = choose("company", "legal_name", observations)
+    assert choice.value == "Acme"
+    # vendor_a and vendor_b agree on the winner (+0.15); vendor_a also dissents (-0.10)
+    assert choice.confidence == pytest.approx(0.85, abs=0.001)
+
+
+def test_competing_values_still_reports_every_value_that_lost():
+    """Confidence changed; what is shown to a human did not.
+
+    'Eight distinct values competed' is a real fact about the field and stays
+    visible, even though it is no longer what the score is built from.
+    """
+    observations = [obs(f"v{i}", "one_vendor", reliability=0.8) for i in range(8)]
+    choice = choose("company", "legal_name", observations)
+    assert choice.competing_values == 8
+    assert len(choice.evidence["alternatives"]) == 7

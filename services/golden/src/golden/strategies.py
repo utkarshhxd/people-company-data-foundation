@@ -69,7 +69,7 @@ FIELD_STRATEGY: dict[tuple[str, str], str] = {
 # Confidence in the chosen value. Built from source reliability — the one
 # dimension that exists precisely to say how much a vendor is to be believed.
 AGREEMENT_BONUS = 0.15      # per additional source reporting the same value
-DISAGREEMENT_PENALTY = 0.10  # per competing value that had to be rejected
+DISAGREEMENT_PENALTY = 0.10  # per additional source reporting a different one
 MIN_CONFIDENCE = 0.05
 MAX_CONFIDENCE = 0.99
 
@@ -119,11 +119,33 @@ def _distinct_sources(observations: list[Observation]) -> int:
     return len({o.source_id for o in observations})
 
 
-def _confidence(winner: Observation, supporting: int, competing: int) -> float:
+def _dissenting_sources(groups: dict[str, list[Observation]], winner_value: str) -> int:
+    """How many distinct sources reported something other than the winning value.
+
+    Sources, not values, and the distinction decides whether the number means
+    anything. A vendor is routinely inconsistent with itself: an employer named
+    by 1,247 of its contacts arrives with 1,247 assertions of that company's
+    address and phone, differing in punctuation, in which office, in how stale
+    the row is. Counting distinct values made that read as several hundred
+    independent contradictions, and the penalty drove the best-attested
+    companies to the confidence floor — exactly backwards, and the same mistake
+    the most_frequent strategy already avoids by counting sources.
+
+    One vendor disagreeing with itself is one vendor's messiness. Two vendors
+    disagreeing is a genuine conflict, and only that should cost confidence.
+    """
+    return len({
+        obs.source_id
+        for value, group in groups.items() if value != winner_value
+        for obs in group
+    })
+
+
+def _confidence(winner: Observation, supporting: int, dissenting: int) -> float:
     score = (
         winner.reliability
         + AGREEMENT_BONUS * (supporting - 1)
-        - DISAGREEMENT_PENALTY * (competing - 1)
+        - DISAGREEMENT_PENALTY * dissenting
     )
     return round(min(MAX_CONFIDENCE, max(MIN_CONFIDENCE, score)), 3)
 
@@ -161,7 +183,12 @@ def choose(
     winner = _pick(strategy, groups)
 
     supporting = _distinct_sources(groups[winner.value])
+    # Two different counts, deliberately. competing_values is reported because
+    # "eight distinct values competed" is a real fact about the field and worth
+    # showing. dissenting is what confidence is built from, because how many
+    # *sources* disagree is the question confidence is answering.
     competing = len(groups)
+    dissenting = _dissenting_sources(groups, winner.value)
 
     # Everything that lost is kept, with who said it. Being beaten is not a
     # reason to disappear.
@@ -179,7 +206,7 @@ def choose(
         value=winner.value,
         raw_value=winner.raw_value,
         strategy=strategy,
-        confidence=_confidence(winner, supporting, competing),
+        confidence=_confidence(winner, supporting, dissenting),
         winning_record_id=winner.record_id,
         winning_source_id=winner.source_id,
         supporting_sources=supporting,

@@ -360,6 +360,10 @@ def reprocess_errors(
                 repository.mark_reprocessed(
                     conn, str(error["error_id"]), outcome.record_id, actor
                 )
+                # The batch now holds a row it did not before, and its counters
+                # are read as what the batch contains rather than what one
+                # attempt at it achieved.
+                ingest_repo.count_reprocessed_row(conn, batch)
                 conn.commit()
                 result.succeeded += 1
 

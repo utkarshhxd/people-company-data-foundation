@@ -243,3 +243,27 @@ def set_batch_columns(
             "UPDATE batch SET columns = %s WHERE batch_id = %s AND columns IS NULL",
             (Json(columns), batch_id),
         )
+
+
+def count_reprocessed_row(conn: psycopg.Connection, batch_id: str) -> None:
+    """A replayed row joins the batch it originally belonged to.
+
+    rows_ingested is what the batch actually holds, not what one attempt at it
+    managed. A row that failed and was later replayed is in the batch, so
+    leaving the counter at the original run's figure would make the batch
+    permanently disagree with its own raw_record count -- and that reconciliation
+    is exactly the check that would otherwise catch a stage dropping rows.
+
+    rows_skipped comes down by one for the same reason: it counted this row as
+    not ingested, and it now is.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE batch
+            SET rows_ingested = rows_ingested + 1,
+                rows_skipped  = greatest(rows_skipped - 1, 0)
+            WHERE batch_id = %s
+            """,
+            (batch_id,),
+        )

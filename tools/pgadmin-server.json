@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "PCDF (Docker)",
+      "Group": "Servers",
+      "Host": "localhost",
+      "Port": 5433,
+      "MaintenanceDB": "pcdf",
+      "Username": "pcdf_dev",
+      "SSLMode": "prefer",
+      "Comment": "People & Company Data Foundation. Postgres runs in Docker and is mapped to host port 5433, not 5432, so a native install on the default port does not clash. Password is POSTGRES_PASSWORD in .env."
+    }
+  }
+}

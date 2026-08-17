@@ -83,6 +83,29 @@ def observations_for_entity(
         return by_field
 
 
+def lock_entity(conn: psycopg.Connection, entity_id: str) -> None:
+    """Take the entity's row so only one builder works on it at a time.
+
+    Golden building reads the current values, decides what changed, then closes
+    and reopens rows. Two builders interleaving in that gap both see the same
+    current row, both close it, and both insert -- and the partial unique index
+    that permits one current value per field correctly refuses the second, so
+    one of them dies. Which is the safe failure, but it is still a failure, and
+    it happens whenever a batch CLI is run while the consumer chain is
+    processing the same entity.
+
+    A row lock rather than an advisory lock: the entity row is exactly the thing
+    being contended, it needs no hashing and cannot collide with an unrelated
+    id, and it is self-evident to anyone reading this later. Readers do not take
+    it, so nothing blocks on reporting.
+
+    Held until the caller's transaction ends, which is also what makes it
+    correct: the lock has to outlive the read it protects.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM entity WHERE entity_id = %s FOR UPDATE", (entity_id,))
+
+
 def current_values(conn: psycopg.Connection, entity_id: str) -> dict[str, dict[str, Any]]:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(

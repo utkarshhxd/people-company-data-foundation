@@ -36,6 +36,11 @@ def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int,
 
     Returns (written, refreshed, unchanged, retired).
     """
+    # Before the read, not after: everything below decides what to write by
+    # comparing against what is currently there, so the lock has to cover the
+    # read as well as the write or it protects nothing.
+    repository.lock_entity(conn, entity_id)
+
     observations = repository.observations_for_entity(conn, entity_id)
     current = repository.current_values(conn, entity_id)
     written = refreshed = unchanged = retired = 0

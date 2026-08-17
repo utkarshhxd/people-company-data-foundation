@@ -1,0 +1,37 @@
+-- Drop an index that has never been read and is losing records.
+--
+-- attribute_observation_field_value_idx was created in migration 0003 for an
+-- access path that was anticipated but never built:
+--
+--     "Entity resolution will look up candidates by canonical identifier
+--      values (email, phone, domain), so index that access path now."
+--
+-- Increment 7 built entity resolution differently. Candidates are found through
+-- entity_identity_key, which stores the identity keys explicitly with their
+-- strengths, and no query has ever gone to this index instead. Measured on a
+-- database holding 590,000+ observations after every sample layout and a
+-- 190,574-row Apollo load:
+--
+--     attribute_observation_field_value_idx    idx_scan = 0          135 MB
+--     attribute_observation_record_idx         idx_scan = 3,673,393   72 MB
+--     attribute_observation_pkey               idx_scan = 4,112,033  169 MB
+--
+-- Zero scans, ever. It costs 135 MB and a write on every one of ten million
+-- observations, and buys nothing.
+--
+-- It was also actively losing data. A btree entry cannot exceed 2,704 bytes,
+-- and Apollo's `Technologies` column holds comma-separated tech stacks around
+-- 2,900 characters long. Every row carrying one failed its insert:
+--
+--     index row size 2880 exceeds btree version 4 maximum 2704
+--
+-- Twenty records out of 190,574 went to record_error for no reason other than
+-- this index existing. Record-at-a-time processing meant twenty bad rows cost
+-- twenty rows rather than the file, and their payloads are kept byte-exact --
+-- but the right fix is to remove the cause, not to keep catching it.
+--
+-- Not replaced with a hashed or truncated variant. There is no query to serve:
+-- adding one speculatively is what produced this, and the next access path
+-- should bring its own index and its own measurement.
+
+DROP INDEX IF EXISTS attribute_observation_field_value_idx;

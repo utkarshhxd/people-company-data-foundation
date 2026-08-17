@@ -132,3 +132,74 @@ def list_errors(
             params,
         )
         return cur.fetchall()
+
+
+def open_errors_for_reprocess(
+    conn: psycopg.Connection, batch_id: str | None, limit: int
+) -> list[dict[str, Any]]:
+    """Failed rows with the payload needed to run them again.
+
+    Reads `raw_payload_bytes`, not `raw_payload`. The readable column is a
+    sanitized copy — a NUL replaced, an unpaired surrogate folded — and
+    reprocessing from it would feed the pipeline a row the vendor never sent,
+    quietly turning a recorded failure into a wrong record. The exact bytes are
+    the authoritative copy, so they are what gets replayed.
+    """
+    where = "WHERE e.status = 'open'"
+    params: list[Any] = []
+    if batch_id:
+        where += " AND e.batch_id = %s"
+        params.append(batch_id)
+    params.append(limit)
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            f"""
+            SELECT e.error_id, e.batch_id, e.source_id, e.entity_type,
+                   e.row_number, e.source_record_id, e.raw_payload_bytes,
+                   e.stage, e.error_type
+            FROM record_error e
+            {where}
+            ORDER BY e.batch_id, e.row_number
+            LIMIT %s
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
+def payload_from_bytes(raw: bytes | memoryview | None) -> dict[str, Any] | None:
+    """Decode the authoritative payload back into the row the reader produced.
+
+    Encoded with surrogatepass on the way in, so it is decoded the same way:
+    anything else would either fail or silently substitute a character, and a
+    replayed row must be byte-for-byte what arrived.
+    """
+    if raw is None:
+        return None
+    data = bytes(raw)
+    return json.loads(data.decode("utf-8", "surrogatepass"))
+
+
+def mark_reprocessed(
+    conn: psycopg.Connection, error_id: str, record_id: str, actor: str
+) -> None:
+    """The row went through. The failure stays on record; only its state moves.
+
+    Rows are never deleted from here. That a record once failed, and why, is
+    part of what happened to it — and if the same row fails again, a deleted
+    history would make a recurring defect look like a new one each time.
+
+    The note carries the record_id the replay produced, so the failure and the
+    record that eventually resulted from it can be joined up afterwards.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE record_error
+            SET status = 'reprocessed', reviewed_at = now(),
+                reviewed_by = %s, review_note = %s
+            WHERE error_id = %s
+            """,
+            (actor, f"reprocessed as record {record_id}", error_id),
+        )

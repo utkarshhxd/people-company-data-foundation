@@ -21,8 +21,24 @@ def get_batch(conn: psycopg.Connection, batch_id: str) -> dict[str, Any] | None:
 
 
 def batch_columns(conn: psycopg.Connection, batch_id: str) -> list[str]:
-    """Column order comes from the first record's payload, which preserves file order."""
+    """The batch's columns, in the order the reader saw them.
+
+    This is the list the layout's fingerprint is taken over, so its order is
+    load-bearing: derive it two different ways and the same file becomes two
+    layouts with two independent sets of mappings, and a human's correction on
+    one stops reaching the other.
+
+    batch.columns is what the reader recorded. The fallback reads the first
+    record's payload keys, which is what this did before migration 0015 and is
+    wrong — raw_payload is jsonb, and jsonb reorders object keys. Batches loaded
+    before 0015 have no stored order and nothing can recover it.
+    """
     with conn.cursor() as cur:
+        cur.execute("SELECT columns FROM batch WHERE batch_id = %s", (batch_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            return list(row[0])
+
         cur.execute(
             """
             SELECT raw_payload FROM raw_record
@@ -180,3 +196,36 @@ def mapping_counts(conn: psycopg.Connection, source_schema_id: str) -> dict[str,
             (source_schema_id,),
         )
         return {status: count for status, count in cur}
+
+
+def find_source_schema_by_columns(
+    conn: psycopg.Connection, source_id: str, columns: list[str], schema_version: str
+) -> str | None:
+    """Find a layout by the set of column names it holds, ignoring their order.
+
+    The fingerprint is the normal way in, and it is order-sensitive on purpose:
+    two files with the same names in a different order are different layouts and
+    map differently. This exists for the one case where the order is not
+    recoverable — batches loaded before migration 0015, whose column list can
+    only be read back from jsonb keys, which jsonb reordered.
+
+    Matching on the set is enough to identify the layout in that situation and
+    not enough to be trusted generally, which is why it is a fallback and not
+    the lookup.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT source_schema_id FROM source_schema
+            WHERE source_id = %s AND schema_version = %s
+              AND (SELECT array_agg(value ORDER BY value)
+                     FROM jsonb_array_elements_text(columns))
+                  = (SELECT array_agg(name ORDER BY name)
+                       FROM unnest(%s::text[]) AS name)
+            ORDER BY created_at
+            LIMIT 1
+            """,
+            (source_id, schema_version, columns),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None

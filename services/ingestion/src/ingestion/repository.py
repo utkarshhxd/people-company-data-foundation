@@ -227,3 +227,19 @@ def iter_committed_records(
         )
         for record_id, ingested_at in cur:
             yield str(record_id), ingested_at
+
+
+def set_batch_columns(
+    conn: psycopg.Connection, batch_id: str, columns: list[str]
+) -> None:
+    """Record the column order the reader saw, once it has seen it.
+
+    Separate from create_batch because the batch exists before the file is
+    opened -- the batch is what makes an in-flight load visible, and it has to
+    be there before anything is read.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE batch SET columns = %s WHERE batch_id = %s AND columns IS NULL",
+            (Json(columns), batch_id),
+        )

@@ -110,7 +110,13 @@ def ingest(
             # ingest in a single transaction; neither is necessary, because a
             # batch only becomes visible downstream once its status is
             # 'completed', which happens after the last batch lands.
-            for _, rows in iter_file(path, batch_size):
+            for columns, rows in iter_file(path, batch_size):
+                # Recorded from the first batch. The reader's order is the file's
+                # order, and it is what the layout's fingerprint is taken over --
+                # raw_payload is jsonb and will not give it back.
+                if rows_read == 0:
+                    repository.set_batch_columns(conn, batch_id, columns)
+
                 source_record_ids = _source_record_ids(
                     rows, record_id_column, offset=rows_read
                 )

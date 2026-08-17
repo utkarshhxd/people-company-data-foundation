@@ -8,7 +8,7 @@ from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
 
-from record_pipeline import repository
+from record_pipeline import repository, runner
 from record_pipeline.runner import EmptySource, run_file
 
 
@@ -78,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     errors = sub.add_parser("errors", help="list records that could not be processed")
     errors.add_argument("--batch-id", help="limit to one batch")
     errors.add_argument("--limit", type=int, default=50)
+
+    reprocess = sub.add_parser(
+        "reprocess",
+        help="run rows from record_error through the pipeline again",
+    )
+    reprocess.add_argument("--batch-id", help="limit to one batch")
+    reprocess.add_argument("--limit", type=int, default=1000)
+    reprocess.add_argument("--reviewed-by", default="reprocess",
+                           help="who is replaying these, recorded on each row")
+    reprocess.add_argument("--no-golden", action="store_true",
+                           help="skip rebuilding each record's entity as it lands")
 
     abandon = sub.add_parser(
         "abandon",
@@ -190,11 +201,39 @@ def _abandon(args) -> int:
     return 0
 
 
+def _reprocess(args) -> int:
+    """Replay failed rows. Exit non-zero if any are still failing.
+
+    A partially successful replay is still a failure as far as the exit code is
+    concerned, for the same reason a partially successful load is: a scheduled
+    job that quietly leaves rows unprocessed is how data goes missing unnoticed.
+    """
+    result = runner.reprocess_errors(
+        batch_id=args.batch_id, limit=args.limit, actor=args.reviewed_by,
+        build_golden=not args.no_golden,
+    )
+    if result.attempted == 0 and result.skipped == 0:
+        print("nothing to reprocess")
+        return 0
+
+    print(f"attempted      {result.attempted}")
+    print(f"  succeeded    {result.succeeded}")
+    print(f"  still failing{result.still_failing:>4}")
+    print(f"  skipped      {result.skipped}")
+    if result.skipped:
+        print()
+        print("skipped rows have no byte-exact payload (written before migration")
+        print("0010) or belong to a batch whose column mapping is gone.")
+    return 1 if result.still_failing else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if args.command == "run":
         return _run(args)
+    if args.command == "reprocess":
+        return _reprocess(args)
     if args.command == "abandon":
         return _abandon(args)
     return _errors(args)

@@ -36,8 +36,21 @@ def get_column_mappings(
 
 
 def batch_columns(conn: psycopg.Connection, batch_id: str) -> list[str]:
-    """Column order comes from the first record's payload, which preserves file order."""
+    """The batch's columns, in the order the reader saw them.
+
+    Read from batch.columns, which whoever read the file recorded. The fallback
+    below reconstructs the list from the first record's payload keys, which is
+    what this did before migration 0015 -- and it is only a fallback because
+    raw_payload is jsonb, and jsonb reorders object keys. Batches loaded before
+    0015 have no stored order and get the old, wrong-ordered answer; nothing can
+    recover what was never written down.
+    """
     with conn.cursor() as cur:
+        cur.execute("SELECT columns FROM batch WHERE batch_id = %s", (batch_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            return list(row[0])
+
         cur.execute(
             """
             SELECT raw_payload FROM raw_record

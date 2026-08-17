@@ -16,6 +16,7 @@ from itertools import chain
 from pathlib import Path
 
 from common import events
+from common.canonical import CANONICAL_SCHEMA_VERSION, column_fingerprint
 from common.db import connect
 from common.kafka import EventProducer, ensure_topics
 from ingestion import repository as ingest_repo
@@ -23,7 +24,7 @@ from ingestion.pipeline import ReingestBlocked, file_hash
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_rows
 
 from record_pipeline import repository, screening
-from record_pipeline.context import SAMPLE_SIZE, prepare
+from record_pipeline.context import SAMPLE_SIZE, RunContext, prepare
 from record_pipeline.unit import RecordOutcome, process
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,11 @@ def _drive(
     if not head:
         raise EmptySource(f"{path.name} has no rows to process")
 
+    # Recorded before the mapping is derived, because the mapping is identified
+    # by a fingerprint of exactly this list and in exactly this order.
+    ingest_repo.set_batch_columns(conn, batch_id, columns)
+    conn.commit()
+
     ctx = prepare(
         conn, source_id, batch_id, entity_type, columns,
         [row for _, row in head],
@@ -267,3 +273,135 @@ def _drive(
         "open_errors": repository.error_count(conn, batch_id),
     }
     return result
+
+
+@dataclass
+class ReprocessResult:
+    attempted: int = 0
+    succeeded: int = 0
+    still_failing: int = 0
+    skipped: int = 0
+
+
+def reprocess_errors(
+    batch_id: str | None = None, limit: int = 1000, actor: str = "reprocess",
+    build_golden: bool = True,
+) -> ReprocessResult:
+    """Run rows from record_error through the pipeline again.
+
+    The point of keeping a failed row byte-exact is being able to replay it once
+    the reason it failed is gone — a fixed defect, a dropped index, a corrected
+    mapping. Without this the payload was evidence and nothing more.
+
+    Each row goes through the *same* `process()` every other record does. A
+    replay path that did anything different would be a second implementation of
+    what a record means, and the two would eventually disagree.
+
+    A row that fails again is left `open` with its new error, because the reason
+    it failed the second time is the one worth reading.
+    """
+    result = ReprocessResult()
+
+    with connect() as conn:
+        errors = repository.open_errors_for_reprocess(conn, batch_id, limit)
+        if not errors:
+            return result
+
+        # Grouped by batch: the run context — column mapping, source, entity
+        # type — is a property of the layout, and rebuilding it per row would
+        # both be wasteful and risk two rows of one file being mapped
+        # differently.
+        by_batch: dict[str, list[dict]] = {}
+        for error in errors:
+            by_batch.setdefault(str(error["batch_id"]), []).append(error)
+
+        for batch, rows in by_batch.items():
+            ctx = _context_for_batch(conn, batch, rows[0])
+            if ctx is None:
+                result.skipped += len(rows)
+                logger.warning(
+                    "batch %s has no stored mapping; cannot reprocess %d row(s)",
+                    batch, len(rows),
+                )
+                continue
+
+            for error in rows:
+                result.attempted += 1
+                payload = repository.payload_from_bytes(error["raw_payload_bytes"])
+                if payload is None:
+                    # Written before migration 0010 added the exact copy. The
+                    # readable column is sanitized, and replaying from it would
+                    # feed the pipeline a row the vendor never sent.
+                    result.skipped += 1
+                    logger.warning(
+                        "row %s has no byte-exact payload; skipped",
+                        error["row_number"],
+                    )
+                    continue
+
+                source_record_id = error["source_record_id"] or str(error["row_number"])
+                try:
+                    outcome = process(
+                        ctx, conn, source_record_id, error["row_number"], payload,
+                        build_golden=build_golden,
+                    )
+                except Exception as exc:
+                    conn.rollback()
+                    repository.record_failure(
+                        conn, batch, str(error["source_id"]), error["entity_type"],
+                        error["row_number"], source_record_id, payload,
+                        "reprocess", exc,
+                    )
+                    conn.commit()
+                    result.still_failing += 1
+                    logger.error("row %s failed again: %s", error["row_number"], exc)
+                    continue
+
+                repository.mark_reprocessed(
+                    conn, str(error["error_id"]), outcome.record_id, actor
+                )
+                conn.commit()
+                result.succeeded += 1
+
+    return result
+
+
+def _context_for_batch(conn, batch_id: str, sample_error: dict):
+    """Rebuild the run context for a batch already loaded.
+
+    The layout is whatever the batch's own records used, so it is read back
+    rather than re-derived: re-deriving could produce a different mapping than
+    the rest of the file got, and then one row of a file would mean something
+    different from its neighbours.
+    """
+    from mapping import repository as mapping_repo
+    from normalization import repository as norm_repo
+
+    columns = norm_repo.batch_columns(conn, batch_id)
+    if not columns:
+        return None
+
+    source_id = str(sample_error["source_id"])
+    source_schema_id = mapping_repo.find_source_schema(
+        conn, source_id, column_fingerprint(columns), CANONICAL_SCHEMA_VERSION
+    )
+    if source_schema_id is None:
+        # Batches loaded before migration 0015 have no stored column order, so
+        # their fingerprint cannot be recomputed. The layout is still
+        # identifiable: a source_schema holds its columns as a jsonb *array*,
+        # which does keep order, so matching on the set of names finds it.
+        source_schema_id = mapping_repo.find_source_schema_by_columns(
+            conn, source_id, columns, CANONICAL_SCHEMA_VERSION
+        )
+    if source_schema_id is None:
+        return None
+
+    return RunContext(
+        source_id=source_id,
+        batch_id=batch_id,
+        entity_type=sample_error["entity_type"],
+        columns=columns,
+        source_schema_id=source_schema_id,
+        mappings=norm_repo.get_column_mappings(conn, source_schema_id),
+        mapping_reused=True,
+    )

@@ -23,8 +23,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      # ruff check only. `ruff format` is deliberately not enforced: this
+      # codebase's line breaking is hand-tuned, particularly in the comments
+      # that carry the reasoning, and mandating a formatter now would rewrite
+      # ~100 files to settle a question nobody has asked. Lint catches the
+      # things that are wrong; formatting here would only make them uniform.
       - run: uvx ruff check .
-      - run: uvx ruff format --check .
 
   migrations:
     # Applied against an empty database, because a migration that only works
@@ -54,7 +58,7 @@ jobs:
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: pcdf
           PCDF_MIGRATIONS_DIR: db/migrations
-        run: uv run --frozen python -m common.migrations
+        run: uv run --frozen --package common python -m common.migrations
       - name: Applying them twice must change nothing
         env:
           POSTGRES_HOST: localhost
@@ -63,7 +67,7 @@ jobs:
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: pcdf
           PCDF_MIGRATIONS_DIR: db/migrations
-        run: uv run --frozen python -m common.migrations
+        run: uv run --frozen --package common python -m common.migrations
 
   test:
     runs-on: ubuntu-latest
@@ -90,12 +94,20 @@ jobs:
           load: true
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      # `uv run` is spelled out because plain `docker run` has no entrypoint.
+      # Locally these are invoked through `docker compose run`, which supplies
+      # entrypoint: ["uv", "run", "--frozen", "--no-sync"] -- so the image is
+      # built expecting it, and calling `python` directly gets the system
+      # interpreter with none of the dependencies installed.
       - name: Test ${{ matrix.service }}
-        run: docker run --rm pcdf-${{ matrix.service }}:ci python -m pytest tests -v
+        run: >-
+          docker run --rm pcdf-${{ matrix.service }}:ci
+          uv run --frozen --no-sync python -m pytest tests -v
 
   test-api:
-    # Separate because the api image has no `uv run` entrypoint and its tests
-    # live at a workspace path rather than beside the service.
+    # Separate because the api image runs uvicorn as its CMD rather than being
+    # driven by a CLI, and its tests live at a workspace path rather than
+    # beside the service.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

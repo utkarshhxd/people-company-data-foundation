@@ -1,0 +1,58 @@
+# Where a firing alert goes.
+#
+# Self-contained by default: alerts collect in Alertmanager's own UI at
+# http://localhost:9093 and nothing leaves the machine. That is a deliberate
+# starting point rather than a placeholder -- routing somewhere real needs a
+# destination somebody owns, and a webhook URL committed to a repository is a
+# credential committed to a repository.
+#
+# To deliver somewhere, uncomment the webhook receiver below and set
+# ALERTMANAGER_WEBHOOK_URL in .env. Slack, Teams and Discord all accept an
+# incoming webhook that shape.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  # Group by alertname so twenty records quarantining does not produce twenty
+  # notifications, and by severity so a critical is never held back waiting to
+  # be batched with warnings.
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  # Deliberately long. These alert on conditions measured in days -- a review
+  # queue that has not moved for a week -- so re-notifying hourly would train
+  # everyone to ignore them, which is the failure mode alerting has.
+  repeat_interval: 24h
+
+  routes:
+    - matchers: [severity = "critical"]
+      receiver: default
+      group_wait: 0s
+      repeat_interval: 1h
+
+    - matchers: [severity = "info"]
+      receiver: default
+      # Informational: worth seeing in the UI, never worth waking for.
+      repeat_interval: 72h
+
+receivers:
+  - name: default
+
+  # - name: webhook
+  #   webhook_configs:
+  #     - url: ${ALERTMANAGER_WEBHOOK_URL}
+  #       send_resolved: true
+
+inhibit_rules:
+  # If the metrics collector cannot reach Postgres, every gauge below it is
+  # stale -- so the queue alerts would fire on numbers that are simply old.
+  # Report the cause, not the symptoms.
+  - source_matchers: [alertname = "MetricsCannotReachDatabase"]
+    target_matchers: [severity =~ "warning|info"]
+    equal: [job]
+
+  - source_matchers: [alertname = "ApiDown"]
+    target_matchers: [severity =~ "warning|info"]
+    equal: [job]

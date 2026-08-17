@@ -827,12 +827,18 @@ from 9 to 54 columns, CSV and Excel.
 The full database restores from backup with every table matching — 11.8M
 observations, verified rather than assumed.
 
+## Alerts
+
+Eleven rules in `infra/prometheus/rules/alerts.yml`, delivered to Alertmanager
+at http://localhost:9093. Almost all of them alert on **age rather than depth**:
+a queue of three is fine, three that have not moved in a fortnight means
+reviewing stopped, and no count reveals that.
+
+Nothing leaves the machine until a webhook is configured. See
+`docs/runbook.md` for the full table and how to route them somewhere real.
+
 ## Future increments
 
-- **Alert rules** — the dashboard makes the numbers visible, but nothing pages
-  anyone. Choosing thresholds is a judgement about how this gets operated, and
-  the age gauges are the ones to alert on: a backlog of three is fine, a backlog
-  of three unchanged for a fortnight is a process failure.
 - **Re-blocking** — two entities that should have merged stay separate until a
   third record matches both. Nothing re-examines old entities when new keys
   arrive.

@@ -1,0 +1,155 @@
+# Alert on the failure modes that stay silent.
+#
+# Every container can be green, every request can return 200, and the data can
+# still be quietly degrading. These rules watch for that, and almost all of them
+# are deliberately about AGE rather than COUNT.
+#
+# The distinction is the whole design. A queue of three items is fine. A queue
+# of three items that has been the same three items for a fortnight is a process
+# failure -- somebody stopped reviewing, and no count anywhere reveals it. A
+# threshold on depth either fires constantly on a busy day or never fires at
+# all; a threshold on age fires exactly when work has stopped moving.
+#
+# Depth is alerted on only where growth itself is the symptom rather than the
+# workload.
+
+groups:
+  - name: pcdf-availability
+    interval: 30s
+    rules:
+      - alert: MetricsCannotReachDatabase
+        # The exporter deliberately returns 200 with pcdf_metrics_up 0 rather
+        # than failing, so nothing else notices. This is the only thing that
+        # does.
+        expr: pcdf_metrics_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Pipeline metrics cannot reach Postgres"
+          description: >-
+            The API is serving but its metrics collector cannot query the
+            database, so every pcdf_ gauge below is stale or absent. Monitoring
+            that dies with the database is useless exactly when it is needed.
+
+      - alert: ApiDown
+        expr: up{job="api-service"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "API is not being scraped"
+          description: "Prometheus cannot reach the API. Nothing below is current."
+
+  - name: pcdf-data-integrity
+    interval: 30s
+    rules:
+      - alert: RecordsCommittedButNotPublished
+        # Rows land in Postgres before their Kafka events, on purpose, so an
+        # event can never reference a row that does not exist. The cost is that
+        # a Kafka outage leaves batches whose downstream stages will never be
+        # triggered, and nothing else reports it.
+        expr: pcdf_batches_events_unpublished > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} batch(es) committed without publishing events"
+          description: >-
+            Rows are in Postgres but the Kafka events were not published, so no
+            downstream stage will run for them. Postgres is the source of truth
+            and nothing is lost -- but nothing will happen either until the
+            batch is reprocessed.
+
+      - alert: BatchFailed
+        expr: increase(pcdf_batches{status="failed"}[1h]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "A batch failed in the last hour"
+          description: >-
+            Its rows stay where they are and are inert downstream, because every
+            stage requires a completed batch. Check `process errors`.
+
+      - alert: RecordsFailedToProcess
+        expr: pcdf_records_awaiting_resolution > 0
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} validated record(s) never reached an entity"
+          description: >-
+            These passed validation but have no entity link, which should not
+            persist -- resolution runs automatically. A consumer may be stopped.
+
+  - name: pcdf-review-queues
+    interval: 30s
+    rules:
+      # The age alerts. Each fires when work has stopped moving, not when there
+      # is a lot of it.
+      - alert: QuarantineNotBeingReviewed
+        expr: pcdf_oldest_open_quarantine_age_seconds > 7 * 24 * 3600
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Oldest quarantined record has waited {{ $value | humanizeDuration }}"
+          description: >-
+            A quarantined record loses nothing by waiting, which is exactly why
+            nobody notices it waiting. Every one of these is a record held back
+            from becoming an entity until a human decides.
+
+      - alert: MappingsNotBeingReviewed
+        expr: pcdf_oldest_unreviewed_mapping_age_seconds > 7 * 24 * 3600
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Oldest unreviewed column mapping is {{ $value | humanizeDuration }} old"
+          description: >-
+            An unreviewed mapping means those values are captured but attributed
+            to no canonical field, so they are never validated and never
+            resolved on. The data is arriving and being ignored.
+
+      - alert: MatchCandidatesNotBeingReviewed
+        expr: pcdf_oldest_open_match_candidate_age_seconds > 14 * 24 * 3600
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Oldest possible-duplicate has waited {{ $value | humanizeDuration }}"
+          description: >-
+            Each open candidate means one real-world thing is probably
+            represented by two ids. Longer than quarantine on purpose: these are
+            judgement calls about ambiguous evidence, not backlog.
+
+      - alert: MatchCandidatesGrowingFast
+        # Depth, not age, and the only queue alerted on that way: a sudden surge
+        # means a load introduced systematic ambiguity -- a vendor whose records
+        # match everything -- which is worth knowing before the load finishes.
+        expr: increase(pcdf_match_candidates{status="open"}[1h]) > 500
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} new possible-duplicates in the last hour"
+          description: >-
+            A surge usually means a source is producing systematically ambiguous
+            matches rather than that reviewers fell behind.
+
+  - name: pcdf-data-quality
+    interval: 30s
+    rules:
+      - alert: RecordsBeingQuarantined
+        expr: increase(pcdf_records_validated{status="invalid"}[1h]) > 100
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} records became invalid in the last hour"
+          description: >-
+            A vendor's format probably changed, or a mapping is wrong. Invalid
+            means not safe to resolve, so these are held rather than lost.
+
+      - alert: UnmappedColumnsHigh
+        # Ratio, not count: a wide vendor file legitimately produces many
+        # uncanonical observations, so an absolute number would alert on the
+        # file rather than on a problem.
+        expr: >-
+          pcdf_observations_uncanonical / clamp_min(pcdf_attribute_observations, 1) > 0.75
+        for: 1h
+        labels: {severity: info}
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of observations map to no field"
+          description: >-
+            Values are being captured but not made canonical. Expected for
+            vendor telemetry columns; worth checking the mapping review queue if
+            it climbs.

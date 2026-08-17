@@ -15,7 +15,8 @@ Git Bash rewrites container paths like `/data/inbox/x.csv` into Windows paths.
 | Postgres | `localhost:5433` (**not** 5432), db `pcdf`, user `pcdf_dev` |
 | API | http://localhost:8000 — docs at `/docs` |
 | Grafana | http://localhost:3001 — "Data Foundation" dashboard |
-| Prometheus | http://localhost:9090 |
+| Prometheus | http://localhost:9090 — rules under Status > Rules |
+| Alertmanager | http://localhost:9093 — firing alerts land here |
 | Data | Docker volume `pcdf_postgres-data` |
 
 Postgres is on 5433 so it cannot clash with a native install on 5432. Grafana is
@@ -179,6 +180,46 @@ docker compose run --rm pipeline python /tools/purge_source.py <source_name>
 > must not disappear. Take a backup first.
 
 ---
+
+## Alerts
+
+Rules live in `infra/prometheus/rules/alerts.yml`; routing in
+`infra/alertmanager/alertmanager.yml`. Firing alerts collect at
+http://localhost:9093 and nothing leaves the machine until a webhook is
+configured — a destination is something somebody has to own, and a webhook URL
+committed to a repository is a credential committed to a repository.
+
+**Almost every rule alerts on age, not depth.** A queue of three is fine; three
+that have been the same three for a fortnight means somebody stopped reviewing,
+and no count reveals that. A depth threshold either fires constantly on a busy
+day or never fires at all.
+
+| Alert | Fires when |
+| --- | --- |
+| `MetricsCannotReachDatabase` | the collector cannot query Postgres — every gauge below is stale |
+| `ApiDown` | Prometheus cannot scrape the API |
+| `RecordsCommittedButNotPublished` | rows landed but Kafka events did not, so no stage will run |
+| `BatchFailed` | a batch failed in the last hour |
+| `RecordsFailedToProcess` | validated records never reached an entity — a consumer may be stopped |
+| `QuarantineNotBeingReviewed` | oldest quarantined record > 7 days |
+| `MappingsNotBeingReviewed` | oldest unreviewed mapping > 7 days |
+| `MatchCandidatesNotBeingReviewed` | oldest possible-duplicate > 14 days |
+| `MatchCandidatesGrowingFast` | > 500 new candidates in an hour — a source producing systematic ambiguity |
+| `RecordsBeingQuarantined` | > 100 records became invalid in an hour — a vendor format probably changed |
+| `UnmappedColumnsHigh` | > 75% of observations map to no field |
+
+`MetricsCannotReachDatabase` and `ApiDown` inhibit the warnings beneath them: if
+the collector is down, the queue gauges are simply old, and reporting the
+symptoms alongside the cause is how an incident becomes noise.
+
+**To deliver somewhere**, uncomment the webhook receiver in
+`infra/alertmanager/alertmanager.yml` and set `ALERTMANAGER_WEBHOOK_URL`. Slack,
+Teams and Discord all accept that shape.
+
+**To test a rule fires**, lower its threshold, `docker compose restart
+prometheus`, and check both http://localhost:9090/alerts and
+http://localhost:9093 — then put the threshold back. An alert rule that has
+never fired is as likely to be wrong as right.
 
 ## Work that needs a human
 

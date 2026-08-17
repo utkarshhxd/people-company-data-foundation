@@ -118,6 +118,13 @@ docker compose ps    # wait until every service shows (healthy)
 > Note: the dockerized Postgres is mapped to host port **5433** by default
 > (`POSTGRES_PORT` in `.env`), not 5432 — this avoids clashing with a
 > Postgres instance that may already be running natively on this machine.
+> **Connect pgAdmin to `localhost:5433`**, not 5432; there is no native install
+> to find, and the data lives in the `pcdf_postgres-data` Docker volume.
+>
+> Grafana is on **3001** for the same reason: 3000 is the port every Node dev
+> server wants, and when it is already taken Docker Desktop can leave the
+> container up and healthy but unreachable from the host rather than failing
+> loudly. If a page on one of these ports looks like somebody else's app, it is.
 
 ## Verifying the stack
 
@@ -136,10 +143,10 @@ curl.exe -i http://localhost:9090/-/healthy
 curl.exe "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22api-service%22%7D"
 
 # Grafana (provisioned Prometheus datasource + starter dashboard)
-curl.exe -i http://localhost:3000/api/health
+curl.exe -i http://localhost:3001/api/health
 ```
 
-Open http://localhost:3000 (credentials from `.env`) and check
+Open http://localhost:3001 (credentials from `.env`) and check
 Connections > Data sources > Prometheus > "Save & test", and the
 "Service Health" dashboard under Dashboards.
 
@@ -702,7 +709,7 @@ Interactive docs at http://localhost:8000/docs.
 
 ## Metrics and dashboards
 
-The **Data Foundation** dashboard in Grafana (http://localhost:3000) watches the
+The **Data Foundation** dashboard in Grafana (http://localhost:3001) watches the
 failure modes that are otherwise silent — the ones where every container stays
 green while the data quietly degrades:
 

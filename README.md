@@ -695,6 +695,7 @@ curl.exe "http://localhost:8000/entities?q=asiafoundation.org"
 curl.exe "http://localhost:8000/entities/<id>"                          # trusted record + sources
 curl.exe "http://localhost:8000/entities/<id>/explain/company_name"     # full lineage
 curl.exe "http://localhost:8000/entities/<id>/timeline"                 # everything that happened
+curl.exe "http://localhost:8000/entities/<id>/relationships"            # where a person works / who works here
 curl.exe "http://localhost:8000/records/<id>"                           # what became of one source row
 ```
 
@@ -704,8 +705,32 @@ not a stable id.
 
 Interactive docs at http://localhost:8000/docs.
 
-> The API is **unauthenticated**. It is local-first and read-only, but anything
-> beyond a laptop needs auth before exposure.
+### Authentication
+
+Set `PCDF_API_KEYS` to a comma-separated list — several so one can be rotated
+out without downtime — and every `/entities` and `/records` route requires one:
+
+```powershell
+curl.exe -H "X-API-Key: <key>" "http://localhost:8000/entities?q=acme.com"
+curl.exe -H "Authorization: Bearer <key>" "http://localhost:8000/entities/<id>"
+```
+
+**With no keys set the API serves loopback and refuses everything else with
+503.** It fails closed on the case that actually leaks: an unauthenticated
+instance that looks healthy is how this gets exposed without anyone deciding to
+expose it. Running open stays possible but must be chosen —
+`PCDF_ALLOW_UNAUTHENTICATED=true` — and whichever way it is configured is logged
+as a warning on every start.
+
+Local development sets that flag, because requests from the host arrive through
+the Docker bridge rather than 127.0.0.1 and would otherwise be refused. **Remove
+it from `.env` before this is reachable by anything else.**
+
+Health checks and `/metrics` never require a key: a liveness probe that needs a
+credential reports the credential's health rather than the service's.
+
+> The API is read-only, which limits the damage but not the disclosure. What it
+> serves is personal data with provenance attached.
 
 ## Metrics and dashboards
 
@@ -771,17 +796,48 @@ docker compose run --rm pipeline python -m pytest tests -v
 docker compose run --rm api uv run --frozen --no-sync python -m pytest services/api/tests -v
 ```
 
+## Operations
+
+`docs/runbook.md` is the operational reference, written for someone who did not
+build this: health checks, backup and restore, releasing a stuck batch,
+replaying failed rows, working the review queues, and what has to be true before
+this is reachable from anywhere but localhost.
+
+`tools/` holds what is run against a live stack rather than shipped in it:
+
+| | |
+| --- | --- |
+| `verify.sql` | twelve reconciliation checks; empty output is the pass |
+| `queries.sql` | ten worked queries for pgAdmin or psql |
+| `backup.sh` · `restore_check.sh` | take a dump, and prove it restores |
+| `sample_file.py` | cut a bounded sample off a large export, streaming |
+| `mapping_coverage.py` | what a vendor's layout would need reviewed, before loading it |
+| `rebuild_golden.py` | recompute golden values after a rule change |
+| `concurrency_check.py` | reproduce the concurrent-builder race, and the fix |
+| `purge_source.py` | remove a source's data — the only thing here that deletes |
+| `parity.py` | prove the two processing paths agree |
+
+## Verified at scale
+
+190,574 Apollo person records, 52 columns, in one run: 2h13m, 23.9 records/sec,
+9.9M observations, 190,163 people, **49,941 companies**, 189,084 employments,
+zero quarantined. Nine distinct vendor layouts have been through end to end,
+from 9 to 54 columns, CSV and Excel.
+
+The full database restores from backup with every table matching — 11.8M
+observations, verified rather than assumed.
+
 ## Future increments
 
-The pipeline is end to end: a messy CSV lands in `data/inbox/` and becomes a
-trusted, provenanced, versioned canonical record with no manual step. What is
-still open:
-
 - **Alert rules** — the dashboard makes the numbers visible, but nothing pages
-  anyone. Choosing thresholds is a judgement about how this gets operated.
+  anyone. Choosing thresholds is a judgement about how this gets operated, and
+  the age gauges are the ones to alert on: a backlog of three is fine, a backlog
+  of three unchanged for a fortnight is a process failure.
 - **Re-blocking** — two entities that should have merged stay separate until a
   third record matches both. Nothing re-examines old entities when new keys
   arrive.
-- **API authentication** — the read API is open. Fine locally, not beyond.
-- **Excel ingestion at scale** — readers support it, but no large `.xlsx` has
-  been run through the pipeline.
+- **Secrets** — credentials are plaintext in `.env`. Non-root containers and API
+  keys are done; a real secret store is not.
+- **Company matching** — name and city are moderate keys, and company files
+  produce a large `match_candidate` queue as a result. Whether that threshold is
+  right is a question about the data rather than the code.

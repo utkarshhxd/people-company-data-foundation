@@ -54,11 +54,15 @@ dependencies = [
     { name = "common" },
     { name = "confluent-kafka" },
     { name = "fastapi" },
+    { name = "golden-service" },
     { name = "httpx" },
+    { name = "mapping-service" },
     { name = "prometheus-fastapi-instrumentator" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-settings" },
+    { name = "resolution-service" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "validation-service" },
 ]
 
 [package.dev-dependencies]
@@ -74,11 +78,15 @@ requires-dist = [
     { name = "common", editable = "libs/common" },
     { name = "confluent-kafka", specifier = ">=2.6" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "golden-service", editable = "services/golden" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "mapping-service", editable = "services/mapping" },
     { name = "prometheus-fastapi-instrumentator", specifier = ">=7.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "resolution-service", editable = "services/resolution" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+    { name = "validation-service", editable = "services/validation" },
 ]
 
 [package.metadata.requires-dev]

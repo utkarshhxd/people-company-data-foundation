@@ -6,9 +6,19 @@ WORKDIR /app
 # --no-install-project defers installing api-service itself, since its src/ isn't copied yet.
 COPY pyproject.toml uv.lock ./
 COPY libs/ libs/
+# The review console delegates every decision to the stage that owns it, so
+# those packages are part of this image's dependency layer.
+COPY services/mapping/pyproject.toml services/mapping/pyproject.toml
+COPY services/validation/pyproject.toml services/validation/pyproject.toml
+COPY services/resolution/pyproject.toml services/resolution/pyproject.toml
+COPY services/golden/pyproject.toml services/golden/pyproject.toml
 COPY services/api/pyproject.toml services/api/pyproject.toml
 RUN uv sync --frozen --no-dev --package api-service --no-install-project
 
+COPY services/mapping/src services/mapping/src
+COPY services/validation/src services/validation/src
+COPY services/resolution/src services/resolution/src
+COPY services/golden/src services/golden/src
 COPY services/api/src services/api/src
 COPY services/api/tests services/api/tests
 # Dev group included so the suite runs in-container like every other service —

@@ -25,6 +25,12 @@ secrets/
 # directory; nothing else needs an entry here any more.
 data/inbox/*
 !data/inbox/fixtures/
+# The watched drop directories. The feed.json in each is configuration and is
+# committed; anything dropped alongside one is vendor data and is not.
+!data/inbox/watch/
+data/inbox/watch/*/*
+!data/inbox/watch/*/feed.json
+!data/inbox/watch/README.md
 
 .venv/
 __pycache__/

@@ -218,6 +218,41 @@ services:
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["process", "--help"]
 
+  # Loads files as they are dropped, so nobody has to remember the arguments.
+  # Each directory under data/inbox/watch/ is one feed and carries its own
+  # feed.json; see services/record_pipeline/src/record_pipeline/watch.py.
+  #
+  # Same image as `pipeline`, different command: this is the only long-running
+  # thing in the record-at-a-time path.
+  watcher:
+    build:
+      context: .
+      dockerfile: services/record_pipeline/Dockerfile
+    restart: unless-stopped
+    networks: [local-net]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PCDF_WATCH_DIR: /data/inbox/watch
+    volumes:
+      # Writable, unlike the other bind mounts here: the watcher moves each
+      # file into _done/ or _failed/ once it has handled it.
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["uv", "run", "--frozen", "--no-sync"]
+    command: ["process", "watch", "--poll", "${WATCH_POLL_SECONDS:-10}"]
+
   # Long-running consumer of batch.ingested. Also the image used for the
   # map-schema / review-mappings CLIs via `docker compose run --rm mapping ...`.
   mapping:

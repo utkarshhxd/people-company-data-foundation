@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
 from common.db import connect
@@ -9,6 +10,7 @@ from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
 
 from record_pipeline import repository, runner
+from record_pipeline import watch as watcher
 from record_pipeline.runner import EmptySource, run_file
 
 
@@ -77,6 +79,27 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--allow-reingest", action="store_true",
         help="process again even if this exact file was already processed for this source",
+    )
+
+    watch = sub.add_parser(
+        "watch",
+        help="process files as they are dropped into a watched feed directory",
+    )
+    watch.add_argument(
+        "--root", type=Path, default=None,
+        help="directory of feed directories (default: $PCDF_WATCH_DIR)",
+    )
+    watch.add_argument(
+        "--poll", type=float, default=watcher.DEFAULT_POLL_SECONDS, metavar="SECONDS",
+        help=(
+            f"how often to look (default {watcher.DEFAULT_POLL_SECONDS:.0f}s). Also "
+            "how long a file must be unchanged before it is considered finished "
+            "arriving."
+        ),
+    )
+    watch.add_argument(
+        "--once", action="store_true",
+        help="do one pass and exit, instead of watching. For cron, and for tests.",
     )
 
     errors = sub.add_parser("errors", help="list records that could not be processed")
@@ -161,6 +184,42 @@ def _run(args) -> int:
     return 0
 
 
+def _watch(args) -> int:
+    """Watch, or do one pass and stop.
+
+    `--once` exists because the same code should serve both a long-running
+    container and a cron entry, and because a loop that only terminates on a
+    signal is otherwise untestable.
+    """
+    root = args.root or watcher.default_root()
+    feeds, problems = watcher.discover_feeds(root)
+    for problem in problems:
+        print(f"warning: {problem}", file=sys.stderr)
+
+    if not args.once:
+        return watcher.Watcher(root, poll_seconds=args.poll).run()
+
+    if not feeds:
+        print(f"no feeds under {root}", file=sys.stderr)
+        return 2
+
+    # One Watcher across both sweeps, because "unchanged since last seen" is
+    # state it carries. The first sweep records what is there, the second acts
+    # on whatever has not moved since — the same settle check the loop uses,
+    # not a weaker one that happens to be easier to run once.
+    once = watcher.Watcher(root, poll_seconds=args.poll)
+    once.sweep()
+    time.sleep(min(args.poll, watcher.DEFAULT_POLL_SECONDS))
+    handled = once.sweep()
+
+    for item in handled:
+        status = "ok  " if item.ok else "FAIL"
+        print(f"{status} {item.path.name}: {item.detail.splitlines()[0]}")
+    if not handled:
+        print("nothing to process")
+    return 1 if any(not item.ok for item in handled) else 0
+
+
 def _errors(args) -> int:
     with connect() as conn:
         rows = repository.list_errors(conn, args.batch_id, args.limit)
@@ -237,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if args.command == "run":
         return _run(args)
+    if args.command == "watch":
+        return _watch(args)
     if args.command == "reprocess":
         return _reprocess(args)
     if args.command == "abandon":

@@ -1,0 +1,6 @@
+{
+  "entity_type": "company",
+  "source_name": "example_feed",
+  "reliability": 0.5,
+  "describes": "organisation"
+}

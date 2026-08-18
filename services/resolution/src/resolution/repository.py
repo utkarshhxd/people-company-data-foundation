@@ -8,7 +8,11 @@ from psycopg.types.json import Json
 def get_batch(conn: psycopg.Connection, batch_id: str) -> dict[str, Any] | None:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT batch_id, source_id, entity_type, status FROM batch WHERE batch_id = %s",
+            """
+            SELECT b.batch_id, b.source_id, b.entity_type, b.status, s.describes
+            FROM batch b JOIN source s ON s.source_id = b.source_id
+            WHERE b.batch_id = %s
+            """,
             (batch_id,),
         )
         return cur.fetchone()

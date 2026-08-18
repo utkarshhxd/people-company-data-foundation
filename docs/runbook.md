@@ -16,7 +16,8 @@ Git Bash rewrites container paths like `/data/inbox/x.csv` into Windows paths.
 | API | http://localhost:8000 — docs at `/docs` |
 | Grafana | http://localhost:3001 — "Data Foundation" dashboard |
 | Prometheus | http://localhost:9090 — rules under Status > Rules |
-| Alertmanager | http://localhost:9093 — firing alerts land here |
+| Alerts page | http://localhost:8000/alerts/page — what is firing, as a page |
+| Alertmanager | http://localhost:9093 — the engine behind it |
 | Data | Docker volume `pcdf_postgres-data` |
 
 Postgres is on 5433 so it cannot clash with a native install on 5432. Grafana is
@@ -98,8 +99,23 @@ that is being replaced underneath them.
 
 ```powershell
 docker compose run --rm pipeline process run /data/inbox/file.csv `
-  --entity-type person --source-name vendor_x --reliability 0.8
+  --entity-type person --source-name vendor_x --reliability 0.8 `
+  --describes organisation
 ```
+
+**`--describes` is set once per source and decides what a shared domain means.**
+
+- `organisation` — rows name companies or employers. A shared domain means the
+  same company, so it can carry a link on its own. Apollo and similar
+  contact/employer feeds.
+- `location` — rows name premises. A shared domain means only the same brand:
+  156 Subway franchises share `subway.com`, every branch of the US Post Office
+  shares `usps.com`, and 442 separate agencies share `maine.gov`. Domain and
+  published email are demoted so they cannot merge distinct places; the
+  vendor's own per-listing id stays decisive.
+
+It defaults to `organisation`, and omitting the flag on a later load leaves
+whatever the source already had rather than resetting it.
 
 Exit codes: `0` fine · `2` bad input · `3` already loaded (use
 `--allow-reingest`) · `5` finished, but some rows failed.
@@ -211,6 +227,18 @@ day or never fires at all.
 `MetricsCannotReachDatabase` and `ApiDown` inhibit the warnings beneath them: if
 the collector is down, the queue gauges are simply old, and reporting the
 symptoms alongside the cause is how an incident becomes noise.
+
+**Seeing what is firing** without leaving the app: http://localhost:8000/alerts/page,
+backed by `GET /alerts`. Both are read-only projections of what Alertmanager
+holds — the rules, grouping, inhibition and resolution all still happen in
+Prometheus and Alertmanager. Nothing about a notification channel is encoded in
+the API, so adding Slack or email later is a change to Alertmanager's routing
+and touches no application code.
+
+The endpoint returns **503 rather than an empty list** when Alertmanager cannot
+be reached: "nothing is wrong" and "we cannot tell whether anything is wrong"
+are opposite states, and a page that renders them identically is worse than one
+showing an error.
 
 **To deliver somewhere**, uncomment the webhook receiver in
 `infra/alertmanager/alertmanager.yml` and set `ALERTMANAGER_WEBHOOK_URL`. Slack,

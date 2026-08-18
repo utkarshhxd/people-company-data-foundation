@@ -36,6 +36,9 @@ class RunContext:
     mappings: dict[str, dict[str, Any]] = field(default_factory=dict)
     mapping_reused: bool = False
     mapping_counts: dict[str, int] = field(default_factory=dict)
+    # What this source catalogues. Decides whether a shared domain identifies
+    # the same entity or merely the same brand. See migration 0016.
+    describes: str = "organisation"
 
     @property
     def unmapped_columns(self) -> list[str]:
@@ -72,6 +75,7 @@ def prepare(
     entity_type: str,
     columns: list[str],
     head_rows: list[dict[str, str | None]],
+    describes: str = "organisation",
 ) -> RunContext:
     """Resolve this layout's mapping, reusing it if the layout has been seen.
 
@@ -106,4 +110,5 @@ def prepare(
         mappings=norm_repo.get_column_mappings(conn, existing),
         mapping_reused=reused,
         mapping_counts=mapping_repo.mapping_counts(conn, existing),
+        describes=describes,
     )

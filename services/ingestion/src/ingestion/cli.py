@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="column holding a natural key; defaults to the row number",
     )
     parser.add_argument("--reliability", type=float, default=0.5, help="source reliability, 0-1")
+    parser.add_argument("--describes", choices=["organisation", "location"],
+                        help="what this source catalogues: 'organisation' (rows name companies, so a shared domain means the same company) or 'location' (rows name premises, so a shared domain means only the same brand)")
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -67,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             record_id_column=args.record_id_column,
             allow_reingest=args.allow_reingest,
             batch_size=args.batch_size,
+            describes=args.describes,
         )
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)

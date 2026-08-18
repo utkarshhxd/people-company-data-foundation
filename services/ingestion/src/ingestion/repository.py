@@ -15,17 +15,31 @@ def payload_hash(payload: dict[str, Any]) -> str:
 
 
 def get_or_create_source(
-    conn: psycopg.Connection, name: str, source_type: str, reliability: float
+    conn: psycopg.Connection, name: str, source_type: str, reliability: float,
+    describes: str | None = None,
 ) -> str:
+    """Find or create a source. `describes` is only written when given.
+
+    A source's semantics -- whether its rows name organisations or places --
+    should not silently revert to a default because a later load omitted the
+    flag. Passing None leaves whatever was decided the first time, so the value
+    changes when somebody changes it and not otherwise.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO source (source_name, source_type, reliability)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (source_name) DO UPDATE SET updated_at = now()
+            INSERT INTO source (source_name, source_type, reliability, describes)
+            VALUES (%s, %s, %s, COALESCE(%s, 'organisation'))
+            -- The parameter is used again rather than EXCLUDED.describes,
+            -- which has already been defaulted by the COALESCE above and so is
+            -- never NULL. Reading it here would reset an existing source to
+            -- 'organisation' every time a load omitted the flag.
+            ON CONFLICT (source_name) DO UPDATE SET
+                updated_at = now(),
+                describes  = COALESCE(%s, source.describes)
             RETURNING source_id
             """,
-            (name, source_type, reliability),
+            (name, source_type, reliability, describes, describes),
         )
         return str(cur.fetchone()[0])
 
@@ -267,3 +281,16 @@ def count_reprocessed_row(conn: psycopg.Connection, batch_id: str) -> None:
             """,
             (batch_id,),
         )
+
+
+def source_describes(conn: psycopg.Connection, source_id: str) -> str:
+    """What this source catalogues, as stored.
+
+    Read back rather than taken from the caller's flag: an existing source keeps
+    the semantics it was created with when a later load omits the flag, so the
+    stored value is the one that governs.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT describes FROM source WHERE source_id = %s", (source_id,))
+        row = cur.fetchone()
+        return row[0] if row else "organisation"

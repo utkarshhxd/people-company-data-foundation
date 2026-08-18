@@ -359,6 +359,10 @@ services:
       # development therefore opts out explicitly, and the API says so on every
       # start rather than leaving it to be inferred.
       PCDF_ALLOW_UNAUTHENTICATED: ${PCDF_ALLOW_UNAUTHENTICATED:-}
+      # Read-only: the API projects what Alertmanager holds. Notification
+      # routing stays entirely in Alertmanager, so adding Slack or a webhook
+      # later changes its config and nothing here.
+      ALERTMANAGER_URL: http://alertmanager:9093
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

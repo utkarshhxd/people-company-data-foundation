@@ -59,12 +59,15 @@ def ingest(
     record_id_column: str | None = None,
     allow_reingest: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    describes: str | None = None
 ) -> IngestResult:
     digest = file_hash(path)
     size = path.stat().st_size
 
     with connect() as conn:
-        source_id = repository.get_or_create_source(conn, source_name, source_type, reliability)
+        source_id = repository.get_or_create_source(
+            conn, source_name, source_type, reliability, describes
+        )
         conn.commit()
 
         # Identity is the file's CONTENT, not its name: a renamed copy is still

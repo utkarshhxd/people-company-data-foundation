@@ -47,6 +47,29 @@ STRONG_KEY_TYPES = {
     "company": {"external_id", "website_domain", "email"},
 }
 
+# What the source set out to catalogue. See migration 0016.
+DESCRIBES_ORGANISATION = "organisation"
+DESCRIBES_LOCATION = "location"
+
+# Keys that stop being decisive when a source lists premises rather than
+# organisations.
+#
+# A domain identifies a brand's web presence. For a vendor cataloguing companies
+# that is the same thing as identifying the company; for one cataloguing
+# branches it is emphatically not, because every Subway franchise, every US Post
+# Office branch and every agency of the state of Maine shares one. The same goes
+# for a published email: `info@subway.com` reaches head office from any of 156
+# storefronts.
+#
+# They are demoted rather than dropped. A shared domain is still real evidence
+# that two listings are related, and still useful for blocking -- it just cannot
+# carry a link by itself, which is exactly what MODERATE means here.
+#
+# external_id is deliberately not demoted: a directory's own identifier is
+# assigned per listing, so it identifies the premises rather than the brand.
+LOCATION_DEMOTED_KEYS = {"website_domain", "email"}
+LOCATION_DEMOTED_WEIGHT = 0.55
+
 _WWW = re.compile(r"^www\d*\.", re.IGNORECASE)
 _TRACKING = re.compile(r"[?#].*$")
 
@@ -179,12 +202,42 @@ def _dedupe(keys: list[IdentityKey]) -> list[IdentityKey]:
     return out
 
 
+def _demote_for_location(keys: list[IdentityKey]) -> list[IdentityKey]:
+    """Strip the decisive-on-their-own keys of their strength.
+
+    Applied after the keys are built rather than while building them, so there
+    is exactly one place that knows what a location source changes, and the
+    builders stay about what a value means rather than about who sent it.
+    """
+    return [
+        IdentityKey(k.key_type, k.key_value, MODERATE)
+        if k.key_type in LOCATION_DEMOTED_KEYS
+        else k
+        for k in keys
+    ]
+
+
 def keys_for(
     entity_type: str, values: dict[str, list[str]], source_id: str,
-    role_email: bool = False,
+    role_email: bool = False, describes: str = DESCRIBES_ORGANISATION,
 ) -> list[IdentityKey]:
+    """Identity keys for one record.
+
+    `describes` is what the source catalogues, and it changes what the same
+    value is worth: for a vendor listing premises, a shared domain says the two
+    listings share a brand, not that they are the same place.
+    """
     if entity_type == "person":
-        return person_keys(values, source_id, role_email)
-    if entity_type == "company":
-        return company_keys(values, source_id)
-    raise ValueError(f"unknown entity_type {entity_type!r}")
+        keys = person_keys(values, source_id, role_email)
+    elif entity_type == "company":
+        keys = company_keys(values, source_id)
+    else:
+        raise ValueError(f"unknown entity_type {entity_type!r}")
+
+    # Company entities only. A source cataloguing premises still names people,
+    # and a person's email identifies them wherever the row came from -- the
+    # ambiguity being guarded against is that one brand's domain is shared by
+    # every one of its branches, which is a fact about companies.
+    if describes == DESCRIBES_LOCATION and entity_type == "company":
+        return _demote_for_location(keys)
+    return keys

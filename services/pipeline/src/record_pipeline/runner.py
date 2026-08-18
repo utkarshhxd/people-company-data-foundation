@@ -86,13 +86,14 @@ def run_file(
     publish: bool = True,
     fail_fast: bool = False,
     async_commit: bool = False,
+    describes: str | None = None,
 ) -> RunResult:
     digest = file_hash(path)
     size = path.stat().st_size
 
     with connect() as conn:
         source_id = ingest_repo.get_or_create_source(
-            conn, source_name, source_type, reliability
+            conn, source_name, source_type, reliability, describes
         )
         conn.commit()
 
@@ -145,6 +146,7 @@ def run_file(
         result = _drive(
             conn, rows, path, batch_id, source_id, entity_type,
             record_id_column, build_golden, publish, fail_fast,
+            ingest_repo.source_describes(conn, source_id),
         )
 
         ingest_repo.finish_batch(
@@ -158,7 +160,7 @@ def run_file(
 def _drive(
     conn, rows, path: Path, batch_id: str, source_id: str, entity_type: str,
     record_id_column: str | None, build_golden: bool, publish: bool,
-    fail_fast: bool,
+    fail_fast: bool, describes: str = "organisation",
 ) -> RunResult:
     producer = None
     if publish:
@@ -187,7 +189,7 @@ def _drive(
 
     ctx = prepare(
         conn, source_id, batch_id, entity_type, columns,
-        [row for _, row in head],
+        [row for _, row in head], describes,
     )
     result = RunResult(
         batch_id=batch_id, source_id=source_id,

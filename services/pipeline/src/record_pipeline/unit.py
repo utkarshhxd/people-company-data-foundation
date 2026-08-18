@@ -167,6 +167,7 @@ def process(
         keys = keys_for(
             ctx.entity_type, _confirmed_values(observations), ctx.source_id,
             role_email=_has_role_email(verdict.result_rows),
+            describes=ctx.describes,
         )
         # Reads the entities built by every record before this one, which is why
         # records must go through in file order: record 900 has to be able to

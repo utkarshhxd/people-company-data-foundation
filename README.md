@@ -834,6 +834,12 @@ at http://localhost:9093. Almost all of them alert on **age rather than depth**:
 a queue of three is fine, three that have not moved in a fortnight means
 reviewing stopped, and no count reveals that.
 
+What is firing is visible at **http://localhost:8000/alerts/page**, backed by
+`GET /alerts`. Both are read-only projections: rules, grouping, inhibition and
+resolution stay in Prometheus and Alertmanager, and no notification channel is
+encoded in the API — so adding Slack or email later is a routing change that
+touches no application code.
+
 Nothing leaves the machine until a webhook is configured. See
 `docs/runbook.md` for the full table and how to route them somewhere real.
 
@@ -844,6 +850,8 @@ Nothing leaves the machine until a webhook is configured. See
   arrive.
 - **Secrets** — credentials are plaintext in `.env`. Non-root containers and API
   keys are done; a real secret store is not.
-- **Company matching** — name and city are moderate keys, and company files
-  produce a large `match_candidate` queue as a result. Whether that threshold is
-  right is a question about the data rather than the code.
+- **Re-blocking with source semantics** — `source.describes` now tells
+  resolution whether a shared domain means the same company or merely the same
+  brand. Entities created before it was set were resolved without it, so the
+  duplicates already in the database still need a pass; `tools/reblock.py`
+  reports them.

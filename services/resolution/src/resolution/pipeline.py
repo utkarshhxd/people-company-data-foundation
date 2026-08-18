@@ -14,7 +14,13 @@ from common.db import connect
 
 from resolution import repository
 from resolution.employer import resolve_employer
-from resolution.keys import IdentityKey, keys_for
+from resolution.keys import (
+    DESCRIBES_ORGANISATION,
+    MODERATE,
+    STRONG,
+    IdentityKey,
+    keys_for,
+)
 from resolution.scoring import (
     DECISION_LINK,
     DECISION_NEW,
@@ -41,14 +47,29 @@ class ResolveResult:
 
 
 def candidates_for(conn, entity_type: str, keys: list[IdentityKey]):
-    """Look up the entities these keys already point at, grouped per entity."""
+    """Look up the entities these keys already point at, grouped per entity.
+
+    A key's stored strength is whatever the source that first wrote it believed.
+    The record being resolved now may come from a source that believes something
+    different -- a directory listing premises holds a domain that a company file
+    stored as decisive -- so the two are reconciled by taking the weaker.
+
+    If either side says this key cannot identify on its own, it cannot. Erring
+    the other way would let one organisation-source entity pull in every branch
+    that happens to share its domain.
+    """
     rows = repository.find_candidates(
         conn, entity_type, [(k.key_type, k.key_value) for k in keys]
     )
+    as_built = {(k.key_type, k.key_value): k.strength for k in keys}
+
     overlaps: dict[str, list[IdentityKey]] = defaultdict(list)
     for row in rows:
+        stored = row["strength"]
+        mine = as_built.get((row["key_type"], row["key_value"]), stored)
+        strength = STRONG if stored == STRONG and mine == STRONG else MODERATE
         overlaps[str(row["entity_id"])].append(
-            IdentityKey(row["key_type"], row["key_value"], row["strength"])
+            IdentityKey(row["key_type"], row["key_value"], strength)
         )
     return decide(entity_type, dict(overlaps))
 
@@ -133,10 +154,13 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
     entity_type = batch["entity_type"]
     source_id = str(batch["source_id"])
 
+    describes = batch.get("describes", DESCRIBES_ORGANISATION)
+
     values = repository.record_values(conn, record_id)
     keys = keys_for(
         entity_type, values, source_id,
         role_email=repository.has_role_email(conn, record_id),
+        describes=describes,
     )
     decision = candidates_for(conn, entity_type, keys) if keys else None
     outcome, entity_id = apply_decision(
@@ -151,6 +175,9 @@ def resolve_record(conn, record, batch, batch_id: str) -> str:
     if entity_type == "person":
         employer_values = repository.record_values(conn, record_id, "employer")
         if employer_values:
+            # The employer is an organisation however the source is
+            # catalogued: a directory of premises still names a company in its
+            # owner field, and that company is not a place.
             resolve_employer(
                 conn, record_id, batch_id, source_id, employer_values, entity_id
             )

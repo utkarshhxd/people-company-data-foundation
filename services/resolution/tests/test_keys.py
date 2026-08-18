@@ -117,3 +117,82 @@ def test_duplicate_keys_are_collapsed():
 def test_unknown_entity_type_is_refused():
     with pytest.raises(ValueError, match="unknown entity_type"):
         keys_for("robot", {}, "src")
+
+
+# --------------------------------------------------------------------------
+# what the source catalogues changes what a key is worth
+# --------------------------------------------------------------------------
+
+from resolution.keys import (
+    DESCRIBES_LOCATION,
+    DESCRIBES_ORGANISATION,
+)
+
+_COMPANY = {
+    "company_name": ["Subway Sandwiches & Salads"],
+    "website": ["subway.com"],
+    "email": ["info@subway.com"],
+    "city": ["Portland"],
+}
+
+
+def _by_type(keys):
+    return {k.key_type: k for k in keys}
+
+
+def test_an_organisation_source_keeps_the_domain_decisive():
+    """Apollo names employers. A shared domain is the same company."""
+    keys = _by_type(keys_for("company", _COMPANY, "src-1",
+                             describes=DESCRIBES_ORGANISATION))
+    assert keys["website_domain"].strength == STRONG
+
+
+def test_a_location_source_demotes_the_domain():
+    """A directory lists premises. 156 Subway franchises share subway.com.
+
+    The key is kept, because it is real evidence the two listings are related
+    and it still narrows the search. It simply cannot carry a link on its own.
+    """
+    keys = _by_type(keys_for("company", _COMPANY, "src-1",
+                             describes=DESCRIBES_LOCATION))
+    assert "website_domain" in keys
+    assert keys["website_domain"].strength == MODERATE
+
+
+def test_a_location_source_demotes_a_published_email_too():
+    """info@subway.com reaches head office from any of the storefronts."""
+    keys = _by_type(keys_for("company", _COMPANY, "src-1",
+                             describes=DESCRIBES_LOCATION))
+    assert keys["email"].strength == MODERATE
+
+
+def test_a_location_source_keeps_its_own_id_decisive():
+    """A directory assigns an id per listing, so it identifies the premises."""
+    values = {**_COMPANY, "company_external_id": ["branch-4417"]}
+    keys = _by_type(keys_for("company", values, "src-1",
+                             describes=DESCRIBES_LOCATION))
+    assert keys["external_id"].strength == STRONG
+
+
+def test_the_default_is_organisation():
+    """Every source loaded before this existed was resolved that way.
+
+    Changing what stored data means as a side effect would be worse than
+    leaving the semantics to be set deliberately.
+    """
+    assert _by_type(keys_for("company", _COMPANY, "src-1"))[
+        "website_domain"
+    ].strength == STRONG
+
+
+def test_person_keys_are_unaffected_by_a_location_source():
+    """A person is not a place, whatever the source is cataloguing.
+
+    The ambiguity being guarded against is that one brand's domain is shared by
+    every branch of it. That is a fact about companies; a person's email still
+    identifies the person.
+    """
+    values = {"email": ["a@b.com"], "full_name": ["Ann Lee"]}
+    keys = _by_type(keys_for("person", values, "src-1",
+                             describes=DESCRIBES_LOCATION))
+    assert keys["email"].strength == STRONG

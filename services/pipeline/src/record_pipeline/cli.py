@@ -35,6 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--reliability", type=float, default=0.5, help="source reliability, 0-1"
     )
     run.add_argument(
+        "--describes", choices=["organisation", "location"],
+        help="what this source catalogues: 'organisation' (rows name companies, so a shared domain means the same company) or 'location' (rows name premises, so a shared domain means only the same brand)",
+    )
+    run.add_argument(
         "--read-ahead", type=int, default=DEFAULT_BATCH_SIZE, metavar="N",
         help=(
             f"rows pulled off disk per read (default {DEFAULT_BATCH_SIZE}). This is "
@@ -129,6 +133,7 @@ def _run(args) -> int:
             publish=not args.no_publish,
             fail_fast=args.fail_fast,
             async_commit=args.async_commit,
+            describes=args.describes,
         )
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)

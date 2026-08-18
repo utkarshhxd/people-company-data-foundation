@@ -9,6 +9,9 @@ dependencies = [
     "confluent-kafka>=2.6",
     "prometheus-fastapi-instrumentator>=7.0",
     "pydantic-settings>=2.6",
+    # Reading Alertmanager. A runtime dependency, not a test one: the alerts
+    # projection calls it on every request.
+    "httpx>=0.27",
     "common",
 ]
 

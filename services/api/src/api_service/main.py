@@ -8,7 +8,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from api_service.auth import describe_configuration
 from api_service.pipeline_metrics import PipelineCollector
-from api_service.routers import entities, health
+from api_service.routers import alerts, entities, health
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(entities.router)
+app.include_router(alerts.router)
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 

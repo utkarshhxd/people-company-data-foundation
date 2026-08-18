@@ -32,6 +32,14 @@ Name matches, domain matches, and the right answer differs. Nothing in the keys
 distinguishes the cases -- only knowing whether a source describes organisations
 or locations does, and that is a fact about the vendor, not about the row.
 
+That fact is now recorded: `source.describes`, added in migration 0016. Live
+resolution has used it since, demoting a premises directory's domain so it can
+no longer carry a link on its own. Entities created before it existed were
+resolved without it, which is why they are still here -- and this now reads the
+same column, so a group is only proposed when the keys behind it would still be
+strong under today's rules. The Subway franchises stop being proposed at all,
+rather than being proposed and needing a human to know better.
+
     docker compose run --rm pipeline python /tools/ops/reblock.py
     docker compose run --rm pipeline python /tools/ops/reblock.py --entity-type company
     docker compose run --rm pipeline python /tools/ops/reblock.py --merge --reviewed-by you
@@ -45,6 +53,7 @@ import sys
 from common.db import connect
 from golden.pipeline import build_entity
 from resolution import repository
+from resolution.keys import DESCRIBES_LOCATION, LOCATION_DEMOTED_KEYS
 
 # Only keys that identify on their own. Name and name+city are moderate -- three
 # colleagues share an employer, a city and a switchboard -- and merging on them
@@ -87,7 +96,18 @@ def duplicate_groups(conn, entity_type: str) -> list[list[str]]:
                 JOIN golden_attribute g
                   ON g.entity_id = k.entity_id AND g.valid_to IS NULL
                  AND g.canonical_field IN ('company_name', 'full_name')
+                -- Where the key came from, so today's source semantics can be
+                -- applied to a key written before they existed. LEFT JOIN
+                -- because source_record_id is ON DELETE SET NULL: a key whose
+                -- record is gone keeps whatever strength it was stored with.
+                LEFT JOIN raw_record r ON r.record_id = k.source_record_id
+                LEFT JOIN source s ON s.source_id = r.source_id
                 WHERE k.entity_type = %s AND k.key_type = ANY(%s)
+                  AND NOT (
+                        %s = 'company'
+                    AND s.describes = %s
+                    AND k.key_type = ANY(%s)
+                  )
             )
             SELECT array_agg(DISTINCT entity_id::text)
             FROM named
@@ -95,7 +115,10 @@ def duplicate_groups(conn, entity_type: str) -> list[list[str]]:
             GROUP BY key_type, key_value, folded
             HAVING count(DISTINCT entity_id) > 1
             """,
-            (entity_type, list(STRONG_KEYS)),
+            (
+                entity_type, list(STRONG_KEYS),
+                entity_type, DESCRIBES_LOCATION, sorted(LOCATION_DEMOTED_KEYS),
+            ),
         )
         groups = [sorted(row[0]) for row in cur]
 

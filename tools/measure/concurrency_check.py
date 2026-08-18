@@ -10,8 +10,8 @@ Reproducing it needs genuine concurrency against a real database, which is why
 this is a script rather than a unit test. The unit suites run without Postgres
 on purpose, and a mocked race proves nothing about whether Postgres serializes.
 
-    docker compose run --rm pipeline python /tools/concurrency_check.py
-    docker compose run --rm pipeline python /tools/concurrency_check.py --no-lock
+    docker compose run --rm pipeline python /tools/measure/concurrency_check.py
+    docker compose run --rm pipeline python /tools/measure/concurrency_check.py --no-lock
 
 --no-lock skips the lock so the original failure can be observed. Expect it to
 fail; that is the point of having it.

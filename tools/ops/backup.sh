@@ -1,8 +1,8 @@
 #!/bin/sh
 # Take a backup of the database, and verify it can be read back.
 #
-#     docker compose exec -T postgres sh /tools/backup.sh            (into /backups)
-#     docker compose exec -T postgres sh /tools/backup.sh /some/dir
+#     docker compose exec -T postgres sh /tools/ops/backup.sh            (into /backups)
+#     docker compose exec -T postgres sh /tools/ops/backup.sh /some/dir
 #
 # Custom format (-Fc), not plain SQL, for three reasons: it compresses, it can
 # be restored selectively with pg_restore, and pg_restore --list can read its
@@ -46,4 +46,4 @@ fi
 echo "ok: $FILE ($SIZE, $TABLES tables with data)"
 echo ""
 echo "Restore into a scratch database and compare before trusting it:"
-echo "    sh /tools/restore_check.sh $FILE"
+echo "    sh /tools/ops/restore_check.sh $FILE"

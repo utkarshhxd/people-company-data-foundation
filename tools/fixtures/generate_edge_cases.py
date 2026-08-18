@@ -18,7 +18,7 @@ Column names are deliberately a vendor's rather than ours: `E-Mail`,
 vocabulary would skip the mapping stage, which is the stage most likely to be
 wrong about a real file.
 
-    python tools/generate_edge_cases.py [outdir]
+    python tools/fixtures/generate_edge_cases.py [outdir]
 
 Writes edge_cases.csv and edge_cases_manifest.csv side by side.
 """

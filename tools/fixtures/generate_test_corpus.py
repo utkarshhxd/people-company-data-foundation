@@ -22,7 +22,7 @@ Every file uses a different vendor's column names on purpose. Testing with our
 own vocabulary would skip the mapping stage, which is the stage most likely to
 be wrong about a real file.
 
-    python tools/generate_test_corpus.py [outdir]
+    python tools/fixtures/generate_test_corpus.py [outdir]
 """
 
 import csv

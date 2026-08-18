@@ -5,8 +5,8 @@ column that needs review (with the reason) and every column that maps to
 nothing. Writes nothing anywhere — this is for deciding whether the canonical
 vocabulary covers a vendor before any of their data is loaded.
 
-    docker compose run --rm pipeline python /tools/mapping_coverage.py
-    docker compose run --rm pipeline python /tools/mapping_coverage.py apollo
+    docker compose run --rm pipeline python /tools/measure/mapping_coverage.py
+    docker compose run --rm pipeline python /tools/measure/mapping_coverage.py apollo
 """
 
 import csv

@@ -32,11 +32,11 @@ Name matches, domain matches, and the right answer differs. Nothing in the keys
 distinguishes the cases -- only knowing whether a source describes organisations
 or locations does, and that is a fact about the vendor, not about the row.
 
-    docker compose run --rm pipeline python /tools/reblock.py
-    docker compose run --rm pipeline python /tools/reblock.py --entity-type company
-    docker compose run --rm pipeline python /tools/reblock.py --merge --reviewed-by you
+    docker compose run --rm pipeline python /tools/ops/reblock.py
+    docker compose run --rm pipeline python /tools/ops/reblock.py --entity-type company
+    docker compose run --rm pipeline python /tools/ops/reblock.py --merge --reviewed-by you
 
-Take a backup first. tools/backup.sh, and tools/restore_check.sh to prove it.
+Take a backup first. tools/ops/backup.sh, and tools/ops/restore_check.sh to prove it.
 """
 
 import argparse

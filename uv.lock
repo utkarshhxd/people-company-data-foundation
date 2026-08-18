@@ -701,7 +701,7 @@ wheels = [
 [[package]]
 name = "record-pipeline-service"
 version = "0.1.0"
-source = { editable = "services/pipeline" }
+source = { editable = "services/record_pipeline" }
 dependencies = [
     { name = "common" },
     { name = "confluent-kafka" },

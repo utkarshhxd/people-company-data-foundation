@@ -46,7 +46,7 @@ dies with the database is useless exactly when it is needed.
 each returning rows only on failure, so all-empty is the pass:
 
 ```powershell
-docker compose cp tools/verify.sql postgres:/tmp/verify.sql
+docker compose cp tools/sql/verify.sql postgres:/tmp/verify.sql
 docker compose exec -T postgres psql -U pcdf_dev -d pcdf -f /tmp/verify.sql
 ```
 
@@ -57,7 +57,7 @@ docker compose exec -T postgres psql -U pcdf_dev -d pcdf -f /tmp/verify.sql
 ### Take a backup
 
 ```powershell
-docker compose exec -T postgres sh /tools/backup.sh /tmp/backups
+docker compose exec -T postgres sh /tools/ops/backup.sh /tmp/backups
 docker compose cp postgres:/tmp/backups ./backups     # copy off the container
 ```
 
@@ -70,7 +70,7 @@ needed.
 ### Verify a backup — do this, not just the backup
 
 ```powershell
-docker compose exec -T postgres sh /tools/restore_check.sh /tmp/backups/pcdf-<stamp>.dump
+docker compose exec -T postgres sh /tools/ops/restore_check.sh /tmp/backups/pcdf-<stamp>.dump
 ```
 
 Restores into a scratch database, compares every table's row count against the
@@ -129,8 +129,8 @@ For a large file, sample it first — a layout is proven by a sample; only volum
 needs the whole file:
 
 ```powershell
-docker compose run --rm pipeline python /tools/sample_file.py /tf/big.xlsx /data/inbox/samples --rows 1000
-docker compose run --rm pipeline python /tools/mapping_coverage.py   # what needs review first
+docker compose run --rm pipeline python /tools/fixtures/sample_file.py /tf/big.xlsx /data/inbox/samples --rows 1000
+docker compose run --rm pipeline python /tools/measure/mapping_coverage.py   # what needs review first
 ```
 
 ---
@@ -189,7 +189,7 @@ FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DES
 Benchmark or demo data can be removed by source name — and only by source name:
 
 ```powershell
-docker compose run --rm pipeline python /tools/purge_source.py <source_name>
+docker compose run --rm pipeline python /tools/ops/purge_source.py <source_name>
 ```
 
 > Nothing else in the system deletes source data, by design. Invalid records
@@ -320,7 +320,7 @@ Walks a trusted value back to the source cell: which vendor, which file, which
 row, which column, and what it literally said — with all five confidence
 dimensions side by side and never summed.
 
-`tools/queries.sql` has ten worked examples for pgAdmin.
+`tools/sql/queries.sql` has ten worked examples for pgAdmin.
 
 ---
 
@@ -330,8 +330,8 @@ Golden records are derived, never authored, so changing a survivorship or
 confidence rule needs no migration — only a recalculation:
 
 ```powershell
-docker compose run --rm pipeline python /tools/rebuild_golden.py --dry-run
-docker compose run --rm pipeline python /tools/rebuild_golden.py
+docker compose run --rm pipeline python /tools/ops/rebuild_golden.py --dry-run
+docker compose run --rm pipeline python /tools/ops/rebuild_golden.py
 ```
 
 Rebuilding is idempotent: an unchanged value keeps its `valid_from`, so

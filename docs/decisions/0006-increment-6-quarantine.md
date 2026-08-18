@@ -75,7 +75,7 @@ prohibition on recomputing our own interpretation of it.
 
 ## Verification
 
-A collision fixture (`data/inbox/ambiguous_company.csv`, columns `name` *and*
+A collision fixture (`data/inbox/fixtures/ambiguous_company.csv`, columns `name` *and*
 `org_name`) exercises the whole loop, and every stage behaved as designed:
 
 1. Both columns claim `company_name`, so increment 3's collision guard sends

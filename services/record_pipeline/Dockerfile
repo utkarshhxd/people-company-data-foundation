@@ -12,7 +12,7 @@ COPY services/normalization/pyproject.toml services/normalization/pyproject.toml
 COPY services/validation/pyproject.toml services/validation/pyproject.toml
 COPY services/resolution/pyproject.toml services/resolution/pyproject.toml
 COPY services/golden/pyproject.toml services/golden/pyproject.toml
-COPY services/pipeline/pyproject.toml services/pipeline/pyproject.toml
+COPY services/record_pipeline/pyproject.toml services/record_pipeline/pyproject.toml
 RUN uv sync --frozen --no-dev --package record-pipeline-service --no-install-project
 
 COPY db/ db/
@@ -22,13 +22,13 @@ COPY services/normalization/src services/normalization/src
 COPY services/validation/src services/validation/src
 COPY services/resolution/src services/resolution/src
 COPY services/golden/src services/golden/src
-COPY services/pipeline/src services/pipeline/src
-COPY services/pipeline/tests services/pipeline/tests
+COPY services/record_pipeline/src services/record_pipeline/src
+COPY services/record_pipeline/tests services/record_pipeline/tests
 RUN uv sync --frozen --package record-pipeline-service
 
 ENV PCDF_MIGRATIONS_DIR=/app/db/migrations
-ENV PYTHONPATH=/app/services/pipeline/src
-WORKDIR /app/services/pipeline
+ENV PYTHONPATH=/app/services/record_pipeline/src
+WORKDIR /app/services/record_pipeline
 
 # Drop root. Nothing here needs it: the venv and the app are baked in at build
 # time, and the only writable path at runtime is the bind-mounted /data, which

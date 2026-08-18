@@ -18,8 +18,8 @@ Excel is streamed with openpyxl in read-only mode, which pulls rows off the
 sheet as they are consumed instead of materializing the workbook. The 386,327 x
 55 Apollo sheet samples in ~11s at ~280 MB resident.
 
-    python /tools/sample_file.py /tf/'Apollo.io Master File.xlsx' /data/inbox/samples
-    python /tools/sample_file.py /tf --all --rows 1000
+    python /tools/fixtures/sample_file.py /tf/'Apollo.io Master File.xlsx' /data/inbox/samples
+    python /tools/fixtures/sample_file.py /tf --all --rows 1000
 """
 
 import argparse

@@ -6,7 +6,7 @@
 -- to a real file" are different claims, and only the second one is the point.
 --
 --     docker compose exec -T postgres psql -U pcdf_dev -d pcdf \
---         -v before="'<batch>'" -v after="'<batch>'" < tools/compare_runs.sql
+--         -v before="'<batch>'" -v after="'<batch>'" < tools/sql/compare_runs.sql
 
 \set QUIET on
 \pset border 2

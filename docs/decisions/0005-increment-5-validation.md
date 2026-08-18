@@ -88,7 +88,7 @@ separately answerable.
 
 ## Verification
 
-A deliberately broken fixture (`data/inbox/invalid_company.csv`) exercises every
+A deliberately broken fixture (`data/inbox/fixtures/invalid_company.csv`) exercises every
 path, and each row failed exactly the rule it was written to fail:
 
 | Row | Content | Result |

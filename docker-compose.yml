@@ -185,7 +185,7 @@ services:
   pipeline:
     build:
       context: .
-      dockerfile: services/pipeline/Dockerfile
+      dockerfile: services/record_pipeline/Dockerfile
     profiles: ["cli"]
     networks: [local-net]
     environment:

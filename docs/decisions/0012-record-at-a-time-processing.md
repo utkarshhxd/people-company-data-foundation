@@ -24,7 +24,7 @@ to be the actual cost.
 
 ## Decision
 
-`services/pipeline` runs one record at a time, end to end. It **implements no
+`services/record_pipeline` runs one record at a time, end to end. It **implements no
 stage logic of its own**: every decision still comes from the module that owns
 it — `observations_for_record`, `validate_record`, `route`, `keys_for`,
 `apply_decision`, `build_entity`. This service chooses the order and the

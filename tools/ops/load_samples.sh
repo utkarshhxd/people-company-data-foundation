@@ -11,7 +11,7 @@
 # duplicating them -- which makes idempotency part of what this exercises rather
 # than something tested separately.
 #
-#     docker compose run --rm --entrypoint sh pipeline /tools/load_samples.sh
+#     docker compose run --rm --entrypoint sh pipeline /tools/ops/load_samples.sh
 
 set -u
 DIR=/data/inbox/scaled

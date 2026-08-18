@@ -4,7 +4,7 @@
 -- is that these are checks against a stated intention rather than a reading of
 -- whatever happened.
 --
---     docker compose exec -T postgres psql -U pcdf_dev -d pcdf < tools/verify_corpus.sql
+--     docker compose exec -T postgres psql -U pcdf_dev -d pcdf < tools/sql/verify_corpus.sql
 
 \set QUIET on
 \pset border 2

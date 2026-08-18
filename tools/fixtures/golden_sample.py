@@ -10,7 +10,7 @@ Deterministic on purpose: ordering by entity_id means the same --limit always
 picks the same entities, so two runs are comparable and a surprising result can
 be looked at again rather than having moved.
 
-    docker compose run --rm pipeline python /tools/golden_sample.py \
+    docker compose run --rm pipeline python /tools/fixtures/golden_sample.py \
         --batch-id <id> --limit 40000
 
 A full load still uses `golden build --batch-id`. This is for testing.

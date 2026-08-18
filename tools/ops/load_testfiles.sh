@@ -8,7 +8,7 @@
 # one fails the ones before it stay exactly as they landed.
 #
 # Run from the repo root:
-#     docker compose run --rm -v "${PWD}/testfiles:/tf:ro" pipeline sh /tools/load_testfiles.sh
+#     docker compose run --rm -v "${PWD}/testfiles:/tf:ro" pipeline sh /tools/ops/load_testfiles.sh
 
 set -u
 

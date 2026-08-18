@@ -1,4 +1,4 @@
--- What the pipeline made of tools/generate_edge_cases.py.
+-- What the pipeline made of tools/fixtures/generate_edge_cases.py.
 --
 -- Each planted row differs from the others in exactly the field it exists to
 -- test, so the planted value can be found without being told which column it is
@@ -7,7 +7,7 @@
 -- kept in step with the generator.
 --
 --     docker compose exec -T postgres psql -U pcdf_dev -d pcdf \
---         -v batch="'<batch_id>'" -f /tools/verify_edge_cases.sql
+--         -v batch="'<batch_id>'" -f /tools/sql/verify_edge_cases.sql
 
 \set QUIET on
 \pset border 2

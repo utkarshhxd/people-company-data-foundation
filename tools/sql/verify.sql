@@ -2,7 +2,7 @@
 -- something is wrong, so an empty result is the pass condition and nobody has
 -- to interpret a number.
 --
---     docker compose exec -T postgres psql -U pcdf_dev -d pcdf -f /tools/verify.sql
+--     docker compose exec -T postgres psql -U pcdf_dev -d pcdf -f /tools/sql/verify.sql
 --
 -- These check internal consistency: that what each stage recorded agrees with
 -- what every other stage recorded. They cannot check whether the data is true --

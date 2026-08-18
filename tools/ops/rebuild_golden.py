@@ -15,8 +15,8 @@ valid_from, so a value nobody disagreed about does not acquire a new history
 row just because the builder ran. History records when something became true,
 not when it was last recomputed.
 
-    docker compose run --rm pipeline python /tools/rebuild_golden.py
-    docker compose run --rm pipeline python /tools/rebuild_golden.py --dry-run
+    docker compose run --rm pipeline python /tools/ops/rebuild_golden.py
+    docker compose run --rm pipeline python /tools/ops/rebuild_golden.py --dry-run
 """
 
 import argparse

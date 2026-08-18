@@ -1,7 +1,7 @@
 #!/bin/sh
 # Restore a backup into a scratch database and prove it matches the original.
 #
-#     docker compose exec -T postgres sh /tools/restore_check.sh /backups/pcdf-....dump
+#     docker compose exec -T postgres sh /tools/ops/restore_check.sh /backups/pcdf-....dump
 #
 # This is the part that is usually skipped, and it is the only part that turns a
 # dump file into a backup. Until a restore has been performed and checked,

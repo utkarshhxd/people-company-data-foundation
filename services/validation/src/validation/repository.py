@@ -54,9 +54,42 @@ def iter_records(
             yield record_id, list(rows)
 
 
+def clear_results(
+    conn: psycopg.Connection, record_ids: list[str], ruleset_version: str
+) -> int:
+    """Forget what this ruleset previously said about these records.
+
+    Upserting alone is not enough to make the latest run win. It refreshes every
+    rule that fires again, but a rule that has STOPPED firing writes nothing, so
+    its old verdict survives as a fact about a value that no longer holds.
+
+    Re-normalizing the Apollo batch showed exactly that: 221 dates that had
+    failed `value.empty_after_normalization` were decoded successfully on the
+    second run, and the failures stayed beside the new passes. A record cannot
+    be allowed to carry two contradictory verdicts from one ruleset.
+
+    Scoped to the version on purpose — results from other rulesets are history
+    and must survive, which is the whole reason the version is on the row.
+    """
+    if not record_ids:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM validation_result "
+            "WHERE record_id = ANY(%s) AND ruleset_version = %s",
+            (record_ids, ruleset_version),
+        )
+        return cur.rowcount
+
+
 def insert_results(conn: psycopg.Connection, rows: list[tuple]) -> int:
     """Within one ruleset version the latest run wins; across versions both are
-    kept, so a judgement can always be read against the rules that made it."""
+    kept, so a judgement can always be read against the rules that made it.
+
+    Callers re-validating existing records must call `clear_results` first: this
+    upsert refreshes rules that fire again but cannot retract one that no longer
+    fires at all.
+    """
     if not rows:
         return 0
     with conn.cursor() as cur:

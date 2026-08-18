@@ -85,3 +85,25 @@ def test_a_raising_rule_is_reported_and_never_mistaken_for_a_pass(ctx):
     assert judgements[0].rule_id == "rule.error"
     assert judgements[0].outcome == FAIL
     assert judgements[0].severity == SEVERITY_INFO
+
+
+def test_every_value_type_in_the_schema_is_either_ruled_or_deliberately_unruled():
+    """The gap this closes: a new canonical field brings a new value type, no
+    rule module claims it, and its values are never judged at all. Silence there
+    is indistinguishable from passing, so the decision has to be explicit."""
+    from common.canonical import COMPANY, PERSON, fields_for
+
+    declared = set(RULES_BY_VALUE_TYPE) | UNRULED_VALUE_TYPES
+    in_use = {f.value_type for e in (PERSON, COMPANY) for f in fields_for(e)}
+    assert in_use <= declared, f"undeclared value types: {sorted(in_use - declared)}"
+
+
+def test_a_range_is_reported_as_a_range_not_as_an_empty_value(ctx):
+    """The record keeps its other fields: this is a warning about one value, not
+    a verdict on the row."""
+    judgements = judge_attribute(
+        None, ctx("employee_count", "integer", "company",
+                  raw="50-100", method="integer:range"))
+    assert len(judgements) == 1
+    assert judgements[0].rule_id == "value.range_given"
+    assert judgements[0].severity == "warning"

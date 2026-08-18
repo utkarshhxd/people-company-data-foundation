@@ -20,7 +20,13 @@ import json
 import re
 from dataclasses import dataclass, field
 
-CANONICAL_SCHEMA_VERSION = "3"
+# Bumped from "3": the commercial-profile fields (revenue, funding, technologies,
+# keywords, SEO description, retail locations) joined the vocabulary. Columns
+# that previously mapped to nothing now map to something, so a mapping made
+# against version 3 and one made against version 4 can legitimately disagree
+# about the same file — which is the whole reason a stored mapping records the
+# version it was made against.
+CANONICAL_SCHEMA_VERSION = "4"
 
 PERSON = "person"
 COMPANY = "company"
@@ -173,7 +179,11 @@ PERSON_FIELDS: tuple[CanonicalField, ...] = (
     _f("country", PERSON, "Country", ("country_name", "nation"),
        value_type="region_code"),
     _f("person_external_id", PERSON, "Source's own identifier for this person",
-       ("external_id", "person_id", "contact_id", "record_id", "id"),
+       # `apollo_contact_id` is here because its company counterpart always was:
+       # `Apollo Account Id` mapped and `Apollo Contact Id` did not, so the same
+       # export handed us the employer's vendor key and threw the person's away.
+       ("external_id", "person_id", "contact_id", "record_id", "id",
+        "apollo_contact_id"),
        value_type="identifier"),
 
     # --- the employer named inside this row -----------------------------------
@@ -224,6 +234,39 @@ PERSON_FIELDS: tuple[CanonicalField, ...] = (
     _employer("company_external_id", "Source's own identifier for the employer",
               ("company_id", "account_id", "apollo_account_id", "employer_id"),
               value_type="identifier"),
+
+    # The employer's commercial profile, as shipped on a contact row.
+    #
+    # These break the employer-qualification convention above, and may: the
+    # convention exists because an unqualified `city` on a person row is the
+    # PERSON's city, so an employer field answering to it would cost the person
+    # their own address. None of the fields below has a person counterpart to
+    # lose to. `Annual Revenue` on a contact row is not ambiguous about whose
+    # revenue it is — a person does not have one — so demanding the vendor write
+    # `Company Annual Revenue` would reject the only spelling anyone ships.
+    _employer("annual_revenue", "Employer's reported annual revenue",
+              ("annual_revenue", "revenue", "company_revenue", "employer_revenue",
+               "estimated_revenue"), value_type="money"),
+    _employer("total_funding", "Total capital the employer has raised",
+              ("total_funding", "funding", "total_raised", "company_funding"),
+              value_type="money"),
+    _employer("latest_funding_stage", "Type of the employer's most recent round",
+              ("latest_funding", "last_funding_type", "funding_stage",
+               "latest_funding_round")),
+    _employer("latest_funding_amount", "Amount raised in the employer's latest round",
+              ("latest_funding_amount", "last_funding_amount"), value_type="money"),
+    _employer("last_funding_date", "When the employer's most recent round closed",
+              ("last_raised_at", "last_funding_date", "latest_funding_date"),
+              value_type="date"),
+    _employer("retail_location_count", "Retail premises the employer operates",
+              ("number_of_retail_locations", "retail_locations", "store_count"),
+              detector="integer", value_type="integer"),
+    _employer("technologies", "Technology stack detected on the employer's site",
+              ("technologies", "tech_stack", "company_technologies")),
+    _employer("keywords", "Descriptive keywords assigned to the employer",
+              ("keywords", "company_keywords")),
+    _employer("seo_description", "Meta description published on the employer's site",
+              ("seo_description", "company_seo_description", "meta_description")),
 )
 
 COMPANY_FIELDS: tuple[CanonicalField, ...] = (
@@ -238,9 +281,19 @@ COMPANY_FIELDS: tuple[CanonicalField, ...] = (
     _f("email", COMPANY, "Company email address",
        ("e_mail", "email_address", "mail", "contact_email", "info_email"),
        detector="email", value_type="email"),
+    # The mobile-shaped aliases are here for the same reason they are on a
+    # person: a small business ships one number and calls it whatever its CRM
+    # called it. Without them a company file headed `mobile_no` produced 496
+    # captured-but-uncanonical phone numbers, and — worse — the phone rules
+    # never ran on them, so a number too short to dial passed in silence.
+    # A company does not own a mobile in any meaningful sense; it owns a number,
+    # and this is the field for it.
     _f("phone", COMPANY, "Company telephone number",
        ("phone_number", "telephone", "tel", "contact_no", "contact_number", "phone_no",
-        "phones"), detector="phone", value_type="phone"),
+        "phones", "mobile_no", "mobile", "mobile_number", "mobile no", "cell",
+        "cellphone", "phone_numbers", "first_phone", "primary_phone",
+        "business_phone", "office_phone"),
+       detector="phone", value_type="phone"),
     _f("fax_phone", COMPANY, "Company fax number",
        ("fax", "fax_number", "fax_no", "facsimile"), detector="phone", value_type="phone"),
     _f("address_line1", COMPANY, "Street address, first line",
@@ -279,6 +332,39 @@ COMPANY_FIELDS: tuple[CanonicalField, ...] = (
        value_type="identifier"),
     _f("company_category", COMPANY, "Source's own category/segment code",
        ("cat", "category", "segment", "class", "company_class")),
+
+    # --- commercial profile ---------------------------------------------------
+    # Scale, funding and web presence. These were captured from day one and
+    # attributed to nothing: 1.7M observations sat in `unmapped` because the
+    # vocabulary had no word for them, so they were never validated, never
+    # resolved on, and never reached a golden record. Storing a value is not the
+    # same as being able to answer a question with it.
+    _f("annual_revenue", COMPANY,
+       "Reported annual revenue, in whatever currency the source used",
+       ("revenue", "annual_revenue", "yearly_revenue", "turnover", "annual_sales",
+        "sales_volume", "estimated_revenue"), value_type="money"),
+    _f("total_funding", COMPANY, "Total capital raised to date",
+       ("funding", "total_funding", "total_raised", "funding_total",
+        "total_funding_amount"), value_type="money"),
+    _f("latest_funding_stage", COMPANY, "Type of the most recent funding round",
+       ("latest_funding", "last_funding_type", "funding_stage", "last_round",
+        "latest_funding_round", "funding_round")),
+    _f("latest_funding_amount", COMPANY, "Amount raised in the most recent round",
+       ("latest_funding_amount", "last_funding_amount", "last_round_amount"),
+       value_type="money"),
+    _f("last_funding_date", COMPANY, "When the most recent funding round closed",
+       ("last_raised_at", "last_funding_date", "latest_funding_date", "last_raised"),
+       value_type="date"),
+    _f("retail_location_count", COMPANY,
+       "Number of retail premises the company operates",
+       ("number_of_retail_locations", "retail_locations", "num_locations",
+        "store_count", "locations_count"), detector="integer", value_type="integer"),
+    _f("technologies", COMPANY, "Technology stack the source detected on the site",
+       ("technologies", "tech_stack", "installed_technologies")),
+    _f("keywords", COMPANY, "Descriptive keywords the source assigns to the company",
+       ("keywords", "company_keywords"), ambiguous=("tags",)),
+    _f("seo_description", COMPANY, "Meta description published on the company's site",
+       ("seo_description", "meta_description", "site_description")),
     # Social presences are distinct fields, not competing answers to `website`.
     # Lead-generation exports ship all four, and without their own fields three
     # of them lose the collision and their values are attributed to nothing.

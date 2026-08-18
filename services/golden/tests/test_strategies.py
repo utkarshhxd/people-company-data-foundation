@@ -249,3 +249,40 @@ def test_competing_values_still_reports_every_value_that_lost():
     choice = choose("company", "legal_name", observations)
     assert choice.competing_values == 8
     assert len(choice.evidence["alternatives"]) == 7
+
+
+# --------------------------------------------------------------------------
+# the commercial profile: everything about it moves
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["annual_revenue", "total_funding", "latest_funding_stage",
+     "latest_funding_amount", "last_funding_date", "retail_location_count",
+     "technologies", "keywords", "seo_description"],
+)
+def test_commercial_facts_take_the_newest_report(field):
+    assert strategy_for("company", field) == MOST_RECENT
+
+
+def test_two_revenue_figures_are_different_years_not_a_contradiction():
+    """Consensus would be wrong here. A vendor reporting last year's revenue is
+    not disagreeing with one reporting this year's, so the newest wins and the
+    older stays in the evidence rather than voting against it."""
+    choice = choose("company", "annual_revenue", [
+        obs("12000000", "vendor_a", reliability=0.9, days=0),
+        obs("15000000", "vendor_b", reliability=0.4, days=200),
+    ])
+    assert choice.value == "15000000"
+    assert choice.strategy == MOST_RECENT
+    assert choice.competing_values == 2
+
+
+def test_a_value_longer_than_a_btree_tuple_is_still_chooseable():
+    """Technologies cells reach ~2,960 characters. Nothing in survivorship may
+    care, and the golden index is a prefix index precisely so this can be
+    stored — see migration 0017."""
+    long_value = ", ".join(f"technology-{n}" for n in range(300))
+    assert len(long_value) > 2704
+    choice = choose("company", "technologies", [obs(long_value, "apollo")])
+    assert choice.value == long_value

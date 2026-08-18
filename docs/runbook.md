@@ -343,6 +343,39 @@ in `libs/common/src/common/canonical.py`. Stored mappings record the version
 they were made against, so old ones stay valid for their version and new files
 get the new vocabulary.
 
+### Backfilling batches after a schema change
+
+New files pick the new vocabulary up on their own. Batches already loaded do
+not: their observations still carry the mapping made against the old version,
+so a field that now exists is still attributed to nothing for them.
+
+Re-run the mapping-dependent stages, in this order, one batch at a time:
+
+```powershell
+docker compose run --rm mapping       map-schema --batch-id <id>
+docker compose run --rm normalization normalize  --batch-id <id>
+docker compose run --rm validation    validate   --batch-id <id>
+docker compose run --rm golden        golden build --batch-id <id>
+```
+
+Each stage reads what the previous one wrote, so the order is not optional.
+
+`map-schema` derives a **new** source schema rather than editing the old one,
+because the fingerprint now includes the new version. Any human corrections made
+against the previous version do not carry over — check
+`review-mappings list --status needs_review` afterwards.
+
+**Resolution is deliberately absent from that list.** Re-run it only if the
+change touched an identity key. Nothing else can move a record between entities,
+and re-resolving a large batch for a non-identity field risks churning links for
+no gain.
+
+Normalization and validation are both safe to re-run: observations are upserted
+(`raw_value` and `observed_at` are never overwritten — they are what the source
+said), and validation retracts its own previous verdicts for the current ruleset
+before writing new ones, so a rule that stops firing does not leave its old
+failure behind.
+
 ---
 
 ## Exposing this beyond localhost
@@ -355,10 +388,10 @@ Not ready. Before it is:
 2. **Move credentials out of `.env`** into a real secret store. They are
    plaintext on disk today.
 3. **Add TLS.** Keys sent over plain HTTP are keys published.
-4. **Add alert rules.** The dashboard makes failures visible; nothing pages
-   anyone.
-5. **Fix concurrent golden building** (ADR 0012 follow-up). Two processes
-   building the same entity violate the single-current-value index.
+4. **Route the alerts somewhere.** The rules and the Alerts page exist; no
+   notification channel is wired up, so nothing reaches anyone who is not
+   looking at the page. This is a receiver in `alertmanager.yml`, not an
+   application change.
 
 The API is read-only, which limits the damage but not the disclosure: what it
 serves is personal data with provenance attached.

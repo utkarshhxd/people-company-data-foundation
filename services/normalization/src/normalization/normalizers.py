@@ -13,6 +13,7 @@ punctuation would destroy meaning ('#610', 'Ave NW') for no gain.
 
 import re
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 # Placeholders that mean "no value". Deliberately conservative: 'na' is absent
 # because it is a real value in some columns (Namibia, North America).
@@ -30,6 +31,27 @@ SPLITTABLE_TYPES = {"email", "phone", "url"}
 SPLIT_PATTERN = re.compile(r"[;|]")
 
 _WHITESPACE = re.compile(r"\s+")
+_CURRENCY_SYMBOL = re.compile(r"[$£€¥₹]|\b(usd|eur|gbp|inr|jpy)\b")
+# An optional suffix, so '1.2M' and '1200000' reduce to the same number.
+_MONEY = re.compile(r"(?P<amount>-?\d+(?:\.\d+)?)\s*(?P<suffix>[kmb]|bn|mm)?")
+_MONEY_SUFFIXES = {"k": 1_000, "m": 1_000_000, "mm": 1_000_000,
+                   "b": 1_000_000_000, "bn": 1_000_000_000}
+# Only unambiguous layouts. dd/mm/yyyy and mm/dd/yyyy are indistinguishable for
+# the first twelve days of every month, so neither is accepted: a date that is
+# wrong two thirds of the time is worse than no date.
+# Excel counts days from 1900-01-01 as serial 1, but also counts a 29th of
+# February in 1900 that did not exist -- so the epoch that makes real dates come
+# out right is two days earlier, not one.
+EXCEL_EPOCH = date(1899, 12, 30)
+EXCEL_SERIAL_MIN = 20000   # 1954-10-03
+EXCEL_SERIAL_MAX = 60000   # 2064-04-16
+_DATE_FORMATS = (
+    re.compile(r"(?P<y>\d{4})-(?P<m>\d{2})-(?P<d>\d{2})(?:[T ].*)?"),
+    re.compile(r"(?P<y>\d{4})/(?P<m>\d{2})/(?P<d>\d{2})(?:[T ].*)?"),
+)
+# Two numbers with a range marker between them: '50-100', '10 to 50', '2019–20'.
+# Matched after thousands separators are removed, so '1,200' is one number.
+_RANGE = re.compile(r"\d\s*(?:-|–|—|\.\.|/|\bto\b)\s*\d", re.IGNORECASE)
 _NON_PHONE = re.compile(r"[^\d+]")
 _NON_DIGIT = re.compile(r"\D")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
@@ -123,9 +145,104 @@ def normalize_url(value: str) -> str:
     return host.lower() + sep + path
 
 
-def normalize_integer(value: str) -> str | None:
-    digits = _NON_DIGIT.sub("", value)
+def normalize_integer(value: str) -> str | Normalized | None:
+    """A whole number, or nothing — never a number the source did not write.
+
+    Stripping non-digits is right for formatting (`1,200`, a spreadsheet's
+    leading `'`) and catastrophic for a range: `50-100` became `50100`, a
+    headcount wrong by a factor of five hundred, which then won survivorship and
+    reached the golden record with only a warning beside it. A warning next to a
+    fabricated number is not the same as not storing one.
+
+    So a range is refused. The source genuinely said something — it said it did
+    not know the exact figure — and there is no integer field that can hold
+    that. Refusing keeps the raw value visible and lets validation say why,
+    which is the same treatment an ambiguous date gets.
+    """
+    text = value.strip()
+    # Thousands separators and spreadsheet artefacts are formatting, not
+    # meaning, and must go before the range test or `1,200` looks like one.
+    for artefact in (",", "'", "’", "_"):
+        text = text.replace(artefact, "")
+    if _RANGE.search(text):
+        return Normalized(None, "integer:range")
+    digits = _NON_DIGIT.sub("", text)
     return digits.lstrip("0") or "0" if digits else None
+
+
+def normalize_money(value: str) -> str | None:
+    """A monetary amount, reduced to whole units of whatever currency it was in.
+
+    Currency is deliberately NOT captured or converted. A vendor that ships an
+    amount without a currency column has not told us the currency, and inventing
+    one would be enrichment by guesswork — the exact thing this module refuses to
+    do. Amounts are comparable within a source, which is what survivorship needs.
+
+    Suffixes are read because real exports use them ('1.2M', '$3.4bn'). They
+    multiply rather than truncate, so 1.2M and 1200000 normalize identically and
+    two sources reporting the same figure differently still agree.
+    """
+    text = value.strip().lower().replace(",", "").replace("_", "")
+    text = _CURRENCY_SYMBOL.sub("", text).strip()
+    match = _MONEY.fullmatch(text)
+    if match is None:
+        return None
+
+    amount = float(match.group("amount"))
+    amount *= _MONEY_SUFFIXES.get(match.group("suffix") or "", 1)
+    # Sub-unit precision in a reported revenue or funding total is noise, and
+    # keeping it would make 3400000 and 3400000.0 two different values.
+    return str(round(amount))
+
+
+def _from_excel_serial(text: str) -> str | None:
+    """Decode Excel's day-count, which is what a date column becomes via xlsx.
+
+    Apollo's CSV export writes '2024-09-01T00:00:00+00:00'; the same field from
+    the xlsx export arrives as '45047'. Both are the vendor stating a date, and
+    reading only one of them threw away 221 dates per thousand rows.
+
+    The epoch is 1899-12-30 rather than 1900-01-01 because Excel counts a
+    29th of February in 1900 that never happened. Offsetting the epoch by the
+    phantom day makes every date after 1900-03-01 come out right, and the range
+    guard below keeps us well clear of the region where it does not.
+    """
+    if not text.isdigit():
+        return None
+    serial = int(text)
+    # Roughly 1954 to 2064. A date column holding a number outside this is not
+    # holding a date, and guessing would turn a wrong column into a wrong fact.
+    if not EXCEL_SERIAL_MIN <= serial <= EXCEL_SERIAL_MAX:
+        return None
+    return (EXCEL_EPOCH + timedelta(days=serial)).isoformat()
+
+
+def normalize_date(value: str) -> str | None:
+    """A calendar date, as ISO yyyy-mm-dd.
+
+    Time and timezone are dropped, not because they are worthless but because
+    every field using this type reports a day ('last raised at', 'verified at')
+    and keeping a timestamp would make two sources reporting the same day
+    disagree. A field that genuinely needs the instant should not use this type.
+    """
+    text = value.strip()
+    serial = _from_excel_serial(text)
+    if serial is not None:
+        return serial
+    for pattern in _DATE_FORMATS:
+        match = pattern.fullmatch(text)
+        if match is None:
+            continue
+        parts = match.groupdict()
+        try:
+            return date(
+                int(parts["y"]), int(parts["m"]), int(parts["d"])
+            ).isoformat()
+        except ValueError:
+            # A well-shaped date that does not exist (2024-02-31). Not repairable
+            # here; validation reports it and the raw value stays visible.
+            return None
+    return None
 
 
 def normalize_identifier(value: str) -> str:
@@ -169,6 +286,8 @@ NORMALIZERS = {
     "postal_code": normalize_postal_code,
     "url": normalize_url,
     "integer": normalize_integer,
+    "money": normalize_money,
+    "date": normalize_date,
     "identifier": normalize_identifier,
     "address": normalize_address,
     "text": normalize_text,
@@ -186,6 +305,12 @@ def normalize(raw: str, value_type: str) -> Normalized:
     func = NORMALIZERS.get(value_type, normalize_text)
     try:
         result = func(raw)
+        # A normalizer may return a Normalized itself when it has a reason worth
+        # naming. ':empty' says nothing usable was left, which is true of 'abc'
+        # in a phone column and misleading for '50-100' — that value was
+        # perfectly meaningful, just not as an integer.
+        if isinstance(result, Normalized):
+            return result
     except Exception:
         # Normalization must never lose a record. Keep the raw value visible
         # and let validation decide what to do with it.

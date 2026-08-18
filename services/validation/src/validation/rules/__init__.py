@@ -12,13 +12,15 @@ one about everything.
   name.py     length, placeholders, drifted fields, completeness
   address.py  plausibility only — never format
   number.py   integer input fidelity, employee count, founding year
+  money.py    amount magnitude, and whether the figure was inferred
+  date.py     not in the future, not implausibly old
   postal.py   shape, lost leading zeros
 
 The public surface is unchanged from when this was one module: `judge_attribute`
 plus the shared types, so nothing downstream had to change.
 """
 
-from validation.rules import address, email, name, number, phone, postal, url
+from validation.rules import address, date, email, money, name, number, phone, postal, url
 from validation.rules.base import (
     DIGITS,
     FAIL,
@@ -34,11 +36,14 @@ from validation.rules.base import (
     rule_normalization_outcome,
 )
 
-# Bumped from "1": address rules did not exist before, and several new rules
-# were added to the existing types. A judgement is only meaningful relative to
-# the rules that produced it, so results from the old ruleset stay queryable
-# beside the new ones rather than being silently reinterpreted.
-RULESET_VERSION = "2"
+# Bumped from "2": money and date became checkable types, and record-level core
+# legibility stopped demanding `full_name` from records that carry both name
+# parts. That second change reverses an existing verdict rather than adding a
+# new one, which is exactly the case the version exists for — a judgement is
+# only meaningful relative to the rules that produced it, so results from the
+# old ruleset stay queryable beside the new ones rather than being silently
+# reinterpreted.
+RULESET_VERSION = "3"
 
 RULES_BY_VALUE_TYPE: dict[str, tuple[Rule, ...]] = {
     "email": email.RULES,
@@ -47,6 +52,8 @@ RULES_BY_VALUE_TYPE: dict[str, tuple[Rule, ...]] = {
     "person_name": name.RULES,
     "address": address.RULES,
     "integer": number.RULES,
+    "money": money.RULES,
+    "date": date.RULES,
     "postal_code": postal.RULES,
 }
 

@@ -49,8 +49,29 @@ def identifying_fields(entity_type: str) -> tuple[str, ...]:
     return IDENTIFYING_FIELDS[entity_type]
 
 
+# Fields that are satisfied by a combination of other fields rather than only by
+# themselves. A record carrying `first_name` and `last_name` is exactly as
+# legible as one carrying `full_name`, and the identifier rule has always said
+# so; core legibility has to agree, or 200,000 perfectly readable rows are
+# warned about for lacking a field nobody sends.
+SATISFIED_BY: dict[str, tuple[tuple[str, ...], ...]] = {
+    "full_name": (NAME_PART_FIELDS,),
+}
+
+
+def _is_present(field: str, present: set[str]) -> bool:
+    if field in present:
+        return True
+    return any(
+        all(part in present for part in combination)
+        for combination in SATISFIED_BY.get(field, ())
+    )
+
+
 def missing_core(entity_type: str, present: set[str]) -> list[str]:
-    return [f for f in CORE_FIELDS.get(entity_type, ()) if f not in present]
+    return [
+        f for f in CORE_FIELDS.get(entity_type, ()) if not _is_present(f, present)
+    ]
 
 
 def missing_expected(entity_type: str, present: set[str]) -> list[str]:

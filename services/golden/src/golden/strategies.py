@@ -64,6 +64,21 @@ FIELD_STRATEGY: dict[tuple[str, str], str] = {
     # so the earliest observation is preferred and disagreement is visible in
     # the evidence rather than resolved by recency.
     ("company", "founded_year"): EARLIEST,
+
+    # The commercial profile. All of it moves, and none of it is settled by
+    # consensus: two vendors reporting different revenue are usually reporting
+    # different years, not contradicting each other, so the newest report wins
+    # and the older one stays in the evidence. Funding totals only ever go up,
+    # which makes recency the right rule for a second reason.
+    ("company", "annual_revenue"): MOST_RECENT,
+    ("company", "total_funding"): MOST_RECENT,
+    ("company", "latest_funding_stage"): MOST_RECENT,
+    ("company", "latest_funding_amount"): MOST_RECENT,
+    ("company", "last_funding_date"): MOST_RECENT,
+    ("company", "retail_location_count"): MOST_RECENT,
+    ("company", "technologies"): MOST_RECENT,
+    ("company", "keywords"): MOST_RECENT,
+    ("company", "seo_description"): MOST_RECENT,
 }
 
 # Confidence in the chosen value. Built from source reliability — the one

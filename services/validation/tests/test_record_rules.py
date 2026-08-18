@@ -103,3 +103,30 @@ def test_mostly_unmapped_columns_warn_that_the_row_is_barely_understood():
 def test_good_coverage_passes():
     observations = [obs("email", "a@b.com"), obs("full_name", "A B"), obs(None, "x")]
     assert outcome_of(judge_record(observations, "person"), "record.mapping_coverage") == PASS
+
+
+def test_first_and_last_name_satisfy_core_legibility():
+    """A row carrying both name parts is exactly as readable as one carrying
+    `full_name`. The identifier rule has always said so; core legibility used to
+    disagree, and warned about 200,574 perfectly legible Apollo rows."""
+    judgements = judge_record(
+        [obs("first_name", "Aruna"), obs("last_name", "Rodrigues"),
+         obs("email", "aruna@example.com")], "person")
+    assert outcome_of(judgements, "record.core_fields") == PASS
+
+
+def test_one_name_part_alone_does_not_satisfy_it():
+    """A surname on its own does not make a person recognisable."""
+    judgements = judge_record(
+        [obs("last_name", "Rodrigues"), obs("email", "r@example.com")], "person")
+    core = judgement_for(judgements, "record.core_fields")
+    assert core.outcome == FAIL
+    assert core.details["missing"] == ["full_name"]
+
+
+def test_a_company_gains_no_such_substitution():
+    """The substitution is a fact about names, not a general escape hatch."""
+    judgements = judge_record([obs("company_external_id", "501")], "company")
+    assert judgement_for(judgements, "record.core_fields").details["missing"] == [
+        "company_name"
+    ]

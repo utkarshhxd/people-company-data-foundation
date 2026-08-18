@@ -96,6 +96,46 @@ docker compose run --rm pipeline python /tools/sample_file.py /tf --all --rows 1
 docker compose run --rm pipeline python /tools/mapping_coverage.py
 ```
 
+### Testing the cleaning pipeline without real data
+
+Vendor files prove the pipeline survives reality; they are bad at proving it is
+*correct*, because nothing in them states what the right answer was. For that
+there is a generated file where every defect is planted deliberately:
+
+```powershell
+python tools/generate_edge_cases.py data/inbox
+
+docker compose run --rm pipeline process run /data/inbox/edge_cases.csv `
+  --entity-type company --source-name edge_cases --source-type csv `
+  --record-id-column record_id --describes organisation
+
+docker compose exec -T postgres psql -U pcdf_dev -d pcdf `
+  -v batch="'<batch_id>'" < tools/verify_edge_cases.sql
+```
+
+500 rows, 57 planted cases. Each row's `record_id` names what it proves —
+`EDGE-011` is the Excel serial date, `DUP-003` the email match, `NEAR-002` the
+pair that must *not* merge — so a result can be checked against an intention
+rather than eyeballed. The column headers are a vendor's (`E-Mail`, `mobile_no`,
+`house_address`, `# Employees`) on purpose: testing with our own vocabulary
+would skip the mapping stage, which is the stage most likely to be wrong about
+a real file.
+
+It has already earned its keep. Its first run found that a company file's
+`mobile_no` column mapped to nothing — 496 phone numbers captured but
+uncanonical, and, worse, three phone rules that never ran at all, so a number
+too short to dial passed in silence. Unmapped values are not validated, which
+makes a mapping gap look exactly like clean data.
+
+To prove a fix rather than assert it, load the same file again under a second
+source name and diff the two runs — the input is byte-identical, so every
+difference is the code:
+
+```powershell
+docker compose exec -T postgres psql -U pcdf_dev -d pcdf `
+  -v before="'<batch>'" -v after="'<batch>'" < tools/compare_runs.sql
+```
+
 `sample_file.py` streams Excel with openpyxl in read-only mode, which is how a
 386,327 x 55 sheet is read at ~280 MB instead of materializing the workbook.
 
@@ -330,6 +370,52 @@ Mappings are stored against a **source schema** (a column layout), not a
 batch, so a human correction is reused the next time that source sends the
 same columns.
 
+### When a column maps to nothing
+
+An unmapped column is still captured in full — but it is never validated, never
+resolved on, and never reaches a golden record. Storing a value is not the same
+as being able to answer a question with it, and the gap is easy to miss because
+nothing fails.
+
+Two kinds of column live in that state, and only one of them is a problem:
+
+- **Vendor workflow state** — Apollo's `Email Sent`, `Replied`, `Stage`,
+  `Contact Owner`, `Lists`. These describe the vendor's CRM, not the company.
+  Correctly unmapped, and they should stay that way.
+- **Real facts with no word for them in the vocabulary.** `Annual Revenue`,
+  `Total Funding`, `Technologies`, `Keywords`, `SEO Description`,
+  `Number of Retail Locations` sat here for the whole life of the project —
+  1.7M observations captured and ignored, because the canonical schema had no
+  field to put them in.
+
+The second kind is fixed by adding the field, not by changing the file, and the
+only way to tell them apart is to look at what the columns actually hold.
+
+Before loading a vendor, dry-run the mapper over their sample files:
+
+```powershell
+docker compose run --rm pipeline python /tools/mapping_coverage.py
+```
+
+For data already loaded, ask the database which unmapped columns are carrying
+real values — a column that is 95% blank is not the one to worry about:
+
+```sql
+SELECT source_column,
+       count(*) FILTER (WHERE NOT is_null_token) AS populated,
+       count(DISTINCT source_id)                 AS sources,
+       min(left(raw_value, 40)) FILTER (WHERE NOT is_null_token) AS sample
+FROM attribute_observation
+WHERE mapping_status = 'unmapped'
+GROUP BY 1
+HAVING count(*) FILTER (WHERE NOT is_null_token) > 0
+ORDER BY populated DESC
+LIMIT 40;
+```
+
+Then backfill the affected batches — see "Backfilling batches after a schema
+change" in [the runbook](docs/runbook.md).
+
 **No AI is used here, deliberately.** Mapping is four deterministic strategies.
 The same file must always produce the same mapping — layouts are stored and
 reused, so a non-deterministic mapper would make the same vendor's data mean
@@ -362,6 +448,19 @@ Normalization only makes values *comparable*; it never repairs or judges:
 - `A^^B` in one cell → two observations, not one mangled string
 - addresses get whitespace collapsing only — `#610` and `Ave NW` carry meaning,
   and `1720WisconsinAveNW` is passed through rather than "corrected"
+- `$1.2M` and `1200000` → `1200000`, so two vendors reporting the same amount
+  differently agree instead of looking like a disagreement. The currency is
+  *not* captured or converted: a vendor that ships an amount without a currency
+  column has not told us the currency, and picking one would be a guess
+- `45047` in a date column → `2023-05-01`. An xlsx export turns dates into
+  Excel's day count, and reading only ISO threw away 221 stated dates per
+  thousand Apollo rows. `2023` does not decode — a bare year in a date column is
+  a year, and the range guard is what stops a wrong column becoming a wrong fact
+
+The last two are decodes, not repairs, but they are still arithmetic we did
+rather than something the vendor wrote — so validation records that separately
+(`money.input`, `date.input`) instead of letting an inferred figure look
+identical to a stated one.
 
 ```powershell
 # Normally unnecessary; the consumer does this automatically

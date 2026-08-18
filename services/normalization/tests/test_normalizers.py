@@ -5,7 +5,9 @@ from normalization.normalizers import (
     is_null_token,
     normalize,
     normalize_address,
+    normalize_date,
     normalize_email,
+    normalize_money,
     normalize_person_name,
     normalize_phone,
     normalize_postal_code,
@@ -127,3 +129,125 @@ def test_identifier_preserves_leading_zeros_and_case():
 
 def test_unknown_value_type_falls_back_to_text():
     assert normalize("  spaced   out  ", "not_a_type").normalized_value == "spaced out"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("100000000000", "100000000000"),      # Apollo ships plain integers
+        ("3,181,850,000", "3181850000"),
+        ("$1.2M", "1200000"),
+        ("1.2m", "1200000"),                   # and must agree with the line above
+        ("USD 45,000", "45000"),
+        ("2,500,000.00", "2500000"),           # sub-unit precision is noise here
+        ("$3.4bn", "3400000000"),
+        ("500k", "500000"),
+    ],
+)
+def test_money(raw, expected):
+    assert normalize_money(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["abc", "N/A revenue", "1.2.3", "--"])
+def test_money_refuses_what_it_cannot_read(raw):
+    """Returning None keeps the raw value visible instead of inventing a figure."""
+    assert normalize_money(raw) is None
+
+
+def test_a_suffix_and_its_expansion_normalize_identically():
+    """Two vendors reporting the same amount differently must agree, or
+    survivorship sees a disagreement that does not exist."""
+    assert normalize_money("1.2M") == normalize_money("1200000")
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2024-09-01T00:00:00+00:00", "2024-09-01"),   # Apollo's 'Last Raised At'
+        ("2025-07-28T01:10:16.666Z", "2025-07-28"),    # a vendor's 'verifyAt'
+        ("1999-12-31", "1999-12-31"),
+        ("2024/03/05", "2024-03-05"),
+    ],
+)
+def test_date(raw, expected):
+    assert normalize_date(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "07/28/2025",   # mm/dd/yyyy and dd/mm/yyyy are indistinguishable
+        "28/07/2025",
+        "2024-02-31",   # well shaped, does not exist
+        "yesterday",
+        "",
+    ],
+)
+def test_date_refuses_ambiguous_or_impossible_input(raw):
+    assert normalize_date(raw) is None
+
+
+def test_the_same_instant_in_two_timezones_is_the_same_day():
+    """Time is dropped on purpose: these fields report a day, and keeping the
+    instant would make two sources reporting it disagree."""
+    assert normalize_date("2024-09-01T23:00:00+00:00") == normalize_date("2024-09-01")
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("45047", "2023-05-01"),   # real values from the Apollo xlsx export
+        ("44805", "2022-09-01"),
+        ("43298", "2018-07-17"),
+        ("40817", "2011-10-01"),
+    ],
+)
+def test_excel_serial_dates_are_decoded(raw, expected):
+    """An xlsx export turns a date column into Excel's day count. Reading only
+    ISO threw away 221 stated dates per thousand Apollo rows."""
+    assert normalize_date(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["19999", "60001", "2023", "0", "-1"])
+def test_numbers_outside_the_serial_range_are_not_dates(raw):
+    """'2023' in a date column is a year, not day 2023 of the Excel epoch. A
+    column of integers that is not really dates would decode just as willingly,
+    so the range guard is what stops a wrong column becoming a wrong fact."""
+    assert normalize_date(raw) is None
+
+
+def test_the_excel_epoch_accounts_for_a_leap_day_that_never_happened():
+    """Excel counts 1900-02-29. Anchoring on 1899-12-30 rather than 1900-01-01
+    is what makes every modern date come out on the right day."""
+    assert normalize_date("45047") == "2023-05-01"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("4200", "4200"),
+        ("1,200", "1200"),        # thousands separator is formatting
+        ("1 200", "1200"),
+        ("'4200", "4200"),        # spreadsheet text-marker
+        ("500+", "500"),          # '+' means at least; 500 is still stated
+        ("0", "0"),
+    ],
+)
+def test_integer_keeps_what_the_source_actually_stated(raw, expected):
+    assert normalize(raw, "integer").normalized_value == expected
+
+
+@pytest.mark.parametrize("raw", ["50-100", "10 to 50", "2019-2020", "10..50", "5 – 9"])
+def test_a_range_is_refused_rather_than_mangled(raw):
+    """`50-100` used to become `50100` — a headcount wrong by 500x that then won
+    survivorship and reached the golden record with only a warning beside it."""
+    result = normalize(raw, "integer")
+    assert result.normalized_value is None
+    assert result.method == "integer:range"
+
+
+def test_a_range_is_distinguished_from_an_unreadable_value():
+    """'abc' left nothing usable. '50-100' was perfectly meaningful — just not as
+    an integer — and validation says so differently."""
+    assert normalize("abc", "integer").method == "integer:empty"
+    assert normalize("50-100", "integer").method == "integer:range"

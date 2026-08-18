@@ -82,4 +82,12 @@ def rule_normalization_outcome(method: str, raw_value: str) -> Judgement | None:
         return failed("value.empty_after_normalization", SEVERITY_ERROR,
                       "nothing usable remained once the value was normalized",
                       raw_value=raw_value, method=method)
+    if method.endswith(":range"):
+        # A warning, not an error: the source said something true and useful —
+        # that it does not know the exact figure. We have no field shaped to
+        # hold that, which is our limitation rather than the vendor's mistake.
+        return failed("value.range_given", SEVERITY_WARNING,
+                      "the source gave a range where a single number was "
+                      "required, so no value was stored",
+                      raw_value=raw_value, method=method)
     return None

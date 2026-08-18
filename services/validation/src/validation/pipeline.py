@@ -194,6 +194,12 @@ def validate_batch(batch_id: str) -> ValidateResult:
 
         def flush() -> int:
             nonlocal pending_results, pending_records, pending_transitions
+            # Retract this ruleset's previous verdicts on these records before
+            # writing the new ones. Without it a re-run leaves behind the
+            # failures of rules that no longer fire — see clear_results.
+            repository.clear_results(
+                conn, [row[0] for row in pending_records], RULESET_VERSION
+            )
             written = repository.insert_results(conn, pending_results)
             repository.upsert_record_validation(conn, pending_records)
             # Same transaction as the verdict it derives from: there is never a

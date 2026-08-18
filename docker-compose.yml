@@ -93,8 +93,19 @@ services:
     image: prom/alertmanager:v0.28.1
     restart: unless-stopped
     networks: [local-net]
+    # Alertmanager does not expand environment variables in its own config, so
+    # the config is a template and this renders it at start. It also decides
+    # whether anything is routed anywhere at all -- see the script.
+    entrypoint: ["/etc/alertmanager/entrypoint.sh"]
+    environment:
+      # Unset by default and that is the point: with no destination configured,
+      # alerts collect in the UI at :9093 and nothing leaves this machine.
+      # Set it in .env to deliver. Slack, Teams and Discord all take a URL of
+      # this shape; the value is a credential and never enters the config file.
+      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
     volumes:
-      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./infra/alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
+      - ./infra/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
       - alertmanager-data:/alertmanager
     ports:
       - "${ALERTMANAGER_PORT:-9093}:9093"

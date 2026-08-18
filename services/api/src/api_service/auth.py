@@ -22,6 +22,7 @@ import hmac
 import logging
 import os
 
+from common.config import resolve
 from fastapi import Header, HTTPException, Request
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,15 @@ _LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def configured_keys() -> frozenset[str]:
-    """Keys from the environment. Comma-separated so several can rotate."""
-    raw = os.environ.get(ENV_KEYS, "")
+    """Keys, comma-separated so several can rotate.
+
+    Read through `common.config.resolve`, so they can arrive as `PCDF_API_KEYS`,
+    as `PCDF_API_KEYS_FILE` pointing at a file, or as a Compose/Kubernetes secret
+    mounted at `/run/secrets/pcdf_api_keys`. These are credentials for reading
+    personal data; keeping them out of the process environment should not require
+    a different API.
+    """
+    raw = resolve(ENV_KEYS, "") or ""
     return frozenset(key.strip() for key in raw.split(",") if key.strip())
 
 

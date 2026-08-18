@@ -123,3 +123,10 @@ jobs:
       - run: >-
           docker run --rm pcdf-api:ci
           uv run --frozen --no-sync python -m pytest services/api/tests -v
+      # `common` has no image of its own, and building one for three functions
+      # that touch no database would be more infrastructure than the job needs.
+      # The api image already carries it.
+      - name: Test common
+        run: >-
+          docker run --rm pcdf-api:ci
+          uv run --frozen --no-sync python -m pytest libs/common/tests -v

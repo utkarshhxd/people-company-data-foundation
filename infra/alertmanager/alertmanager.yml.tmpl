@@ -1,0 +1,70 @@
+# Where a firing alert goes.
+#
+# This file is a template. entrypoint.sh renders it at container start and picks
+# the route's receiver from whether ALERTMANAGER_WEBHOOK_URL is set:
+#
+#   unset -> __RECEIVER__ becomes 'default', a receiver with no destination.
+#            Alerts collect in Alertmanager's own UI at http://localhost:9093
+#            and nothing leaves the machine.
+#   set   -> __RECEIVER__ becomes 'webhook'. Slack, Teams and Discord all accept
+#            an incoming webhook of this shape.
+#
+# The URL itself is never substituted into this file. The entrypoint writes it to
+# a file that only Alertmanager can read and the receiver below reads it from
+# there, so the credential is not in the config, not in the image, and not in
+# `docker inspect` output for anyone who can list containers.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: __RECEIVER__
+  # Group by alertname so twenty records quarantining does not produce twenty
+  # notifications, and by severity so a critical is never held back waiting to
+  # be batched with warnings.
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  # Deliberately long. These alert on conditions measured in days -- a review
+  # queue that has not moved for a week -- so re-notifying hourly would train
+  # everyone to ignore them, which is the failure mode alerting has.
+  repeat_interval: 24h
+
+  routes:
+    - matchers: [severity = "critical"]
+      receiver: __RECEIVER__
+      group_wait: 0s
+      repeat_interval: 1h
+
+    - matchers: [severity = "info"]
+      receiver: __RECEIVER__
+      # Informational: worth seeing in the UI, never worth waking for.
+      repeat_interval: 72h
+
+receivers:
+  - name: default
+
+  - name: webhook
+    webhook_configs:
+      # Read at notify time, not at load time, so this receiver existing costs
+      # nothing when nothing routes to it.
+      - url_file: /alertmanager/webhook-url
+        send_resolved: true
+        # One retry window. A destination that is down for longer than this is
+        # an outage in the destination, and queueing alerts at Alertmanager
+        # until it returns is how a notification arrives about a problem that
+        # was fixed hours ago.
+        http_config:
+          follow_redirects: true
+
+inhibit_rules:
+  # If the metrics collector cannot reach Postgres, every gauge below it is
+  # stale -- so the queue alerts would fire on numbers that are simply old.
+  # Report the cause, not the symptoms.
+  - source_matchers: [alertname = "MetricsCannotReachDatabase"]
+    target_matchers: [severity =~ "warning|info"]
+    equal: [job]
+
+  - source_matchers: [alertname = "ApiDown"]
+    target_matchers: [severity =~ "warning|info"]
+    equal: [job]

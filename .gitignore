@@ -11,6 +11,10 @@ backups/
 # names, home addresses, phone numbers, email addresses, IP addresses).
 testfiles/
 
+# Credential files for the docker-compose.secrets.yml overlay. The whole point
+# of that overlay is that these never enter the image, the environment, or here.
+secrets/
+
 # Local ingestion drop dir. Everything in it is ignored by default, because
 # anything cut from testfiles/ -- samples/, scaled/, full/, corpus/ -- carries
 # the same real personal data the originals do.

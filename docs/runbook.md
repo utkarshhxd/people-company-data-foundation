@@ -97,6 +97,26 @@ that is being replaced underneath them.
 
 ## Loading data
 
+Two ways in. For anything that arrives more than once, prefer the first.
+
+**A watched feed** — write the arguments once, then drop files:
+
+```bash
+mkdir -p data/inbox/watch/vendor_x
+cat > data/inbox/watch/vendor_x/feed.json <<'JSON'
+{"entity_type": "person", "source_name": "vendor_x",
+ "reliability": 0.8, "describes": "organisation"}
+JSON
+docker compose up -d watcher
+docker compose logs -f watcher
+```
+
+Files are left alone until they stop changing, then processed and moved to
+`_done/` with a receipt — or `_failed/` with the reason, without stopping the
+feed. See [data/inbox/watch/README.md](../data/inbox/watch/README.md).
+
+**One file, by hand:**
+
 ```powershell
 docker compose run --rm pipeline process run /data/inbox/file.csv `
   --entity-type person --source-name vendor_x --reliability 0.8 `
@@ -261,6 +281,14 @@ UNION ALL SELECT 'failed rows', count(*) FROM record_error WHERE status='open';
 None of these are errors. They are the decisions the system deliberately
 refused to make on its own.
 
+**Work them at http://localhost:8000/review/page.** The console shows each item
+with the evidence needed to decide it — the sample values under an ambiguous
+column, the two entities a merge would join, the exact cell each failing rule
+objected to. It also carries the follow-through: accepting a merge rebuilds the
+survivor's golden record, and releasing a record from quarantine resolves and
+builds it. The CLI commands below do the same decisions but leave that to you.
+See [the review console guide](guides/review-console.md).
+
 **The age of a queue matters more than its depth.** A backlog of three is fine;
 a backlog of three that has been three for a fortnight is a process failure, and
 no count alone reveals that. Alert on
@@ -382,16 +410,29 @@ failure behind.
 
 Not ready. Before it is:
 
-1. **Set `PCDF_API_KEYS`** and remove `PCDF_ALLOW_UNAUTHENTICATED` from `.env`.
-   With neither set the API refuses non-loopback requests, which is the safe
-   default but not a configuration.
-2. **Move credentials out of `.env`** into a real secret store. They are
-   plaintext on disk today.
-3. **Add TLS.** Keys sent over plain HTTP are keys published.
-4. **Route the alerts somewhere.** The rules and the Alerts page exist; no
-   notification channel is wired up, so nothing reaches anyone who is not
-   looking at the page. This is a receiver in `alertmanager.yml`, not an
-   application change.
+1. **Set real API keys and stop serving open.** Use the secrets overlay, which
+   does both:
 
-The API is read-only, which limits the damage but not the disclosure: what it
-serves is personal data with provenance attached.
+   ```bash
+   mkdir -p secrets
+   printf '%s' 'a-strong-password' > secrets/postgres_password
+   printf '%s' 'key-one,key-two'   > secrets/pcdf_api_keys
+   docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+   ```
+
+   It sets `PCDF_ALLOW_UNAUTHENTICATED=false` and keeps both credentials out of
+   the container environment. With neither keys nor the opt-out set, the API
+   refuses non-loopback requests — the safe default, but not a configuration.
+2. **Add TLS.** Keys sent over plain HTTP are keys published. Nothing here
+   terminates TLS; put a reverse proxy in front.
+3. **Put a real secret store behind the seam.** `/run/secrets/<name>` is read
+   without configuration, so Vault or a cloud KMS that projects files needs no
+   application change. Today those files are files on a disk.
+4. **Route the alerts.** Set `ALERTMANAGER_WEBHOOK_URL` in `.env` and restart
+   `alertmanager`. Until then nothing reaches anyone who is not looking at the
+   page.
+
+The API is no longer strictly read-only: `/review/*` writes human decisions, and
+one of them merges entities. It still writes no values. Treat the keys
+accordingly — what this serves is personal data with provenance attached, and
+what it now accepts is a decision that changes which entity a record belongs to.

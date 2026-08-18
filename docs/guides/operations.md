@@ -44,19 +44,48 @@ is useless exactly when it is needed.
 
 ## Alerts
 
-Eleven rules in `infra/prometheus/rules/alerts.yml`, delivered to Alertmanager
-at http://localhost:9093. Almost all of them alert on **age rather than depth**:
-a queue of three is fine, three that have not moved in a fortnight means
-reviewing stopped, and no count reveals that.
+Eleven rules in `../../infra/prometheus/rules/alerts.yml`, delivered to
+Alertmanager at http://localhost:9093. Almost all of them alert on **age rather
+than depth**: a queue of three is fine, three that have not moved in a fortnight
+means reviewing stopped, and no count reveals that.
 
 What is firing is visible at **http://localhost:8000/alerts/page**, backed by
 `GET /alerts`. Both are read-only projections: rules, grouping, inhibition and
 resolution stay in Prometheus and Alertmanager, and no notification channel is
-encoded in the API — so adding Slack or email later is a routing change that
-touches no application code.
+encoded in the API — so adding Slack is a routing change that touches no
+application code.
 
-Nothing leaves the machine until a webhook is configured. See
-`docs/runbook.md` for the full table and how to route them somewhere real.
+### Routing them somewhere real
+
+With `ALERTMANAGER_WEBHOOK_URL` unset, the route uses a receiver with no
+destination: alerts collect in the UI at :9093 and nothing leaves the machine.
+Set it and every alert is delivered:
+
+```bash
+# .env — Slack, Teams and Discord all accept a URL of this shape
+ALERTMANAGER_WEBHOOK_URL=https://hooks.slack.com/services/...
+
+docker compose up -d alertmanager
+```
+
+The config is a template rendered at container start, because Alertmanager does
+not expand environment variables in its own config. The URL is a credential —
+anyone holding it can post into that channel — so it is written to a file with
+`umask 077` and read via `url_file`. It is never substituted into the config, so
+it is not in the image and not in `docker inspect`. Unsetting the variable
+removes the file rather than leaving a live credential in the volume.
+
+Prove delivery without waiting for a real alert:
+
+```bash
+docker compose exec -T alertmanager amtool alert add alertname=DeliveryTest \
+    severity=critical --alertmanager.url=http://localhost:9093
+```
+
+`severity=critical` has `group_wait: 0s`, so it is sent immediately.
+
+See `../runbook.md` for the full table of rules and what to do about each.
+
 
 ## Operations
 
@@ -110,10 +139,41 @@ containers, so the path inside a container is `/tools/<group>/<script>`.
 | `verify_corpus.sql` · `verify_edge_cases.sql` | what the pipeline made of the generated files |
 | `compare_runs.sql` | diff two batches of the same source |
 
+## Credentials
+
+Every setting can be supplied three ways, and the most explicit wins:
+
+1. `POSTGRES_PASSWORD=...` — an environment variable;
+2. `POSTGRES_PASSWORD_FILE=/path/to/file` — a file to read it from;
+3. a file at `/run/secrets/postgres_password` — found without being configured,
+   because that is where Compose and Kubernetes both mount one.
+
+The point is what an environment variable is visible to: `docker inspect`, the
+environment of anything else in the container, and the shell history of whoever
+exported it. A file is visible to whoever can read the file.
+
+`docker-compose.secrets.yml` wires the two credentials that matter through it:
+
+```bash
+mkdir -p secrets
+printf '%s' 'a-strong-password' > secrets/postgres_password
+printf '%s' 'key-one,key-two'   > secrets/pcdf_api_keys
+
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+It is an overlay rather than the default because the default has to work on a
+fresh clone with nothing but `cp .env.example .env`. It also sets
+`PCDF_ALLOW_UNAUTHENTICATED=false`, since with real keys in place leaving the
+door open would defeat them.
+
+This is not a secret store. It is the seam that lets one go in front of this
+without any service knowing.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` builds all eight images, runs all eight suites
-in-container, runs `ruff check` and `ruff format --check`, and applies every
+in-container, runs `ruff check`, and applies every
 migration against an **empty** database — twice, because a migration that is not
 idempotent is a migration that cannot be re-run.
 

@@ -26,6 +26,8 @@ worked examples and the reasoning for that stage.
 | [Entity resolution](docs/guides/entity-resolution.md) | Linking records across vendors, and the employer named inside a person row |
 | [Golden record and provenance](docs/guides/golden-record.md) | The one trusted value per field, and tracing it back to a source cell |
 | [Read API](docs/guides/read-api.md) | Serving trusted data and lineage over HTTP, and the authentication in front of it |
+| [Review console](docs/guides/review-console.md) | Working the three queues that stop and ask for a human, in a browser or a terminal |
+| [Watched feeds](data/inbox/watch/README.md) | Dropping a file and having it load itself, under the feed's settings |
 | [Operations](docs/guides/operations.md) | Metrics, dashboards, alerts, backup and restore, CI, tests |
 | [Runbook](docs/runbook.md) | What to do when something is wrong |
 
@@ -47,8 +49,9 @@ services/normalization/       # normalization consumer + normalize CLI
 services/validation/          # validation consumer + validate/quarantine CLIs
 services/resolution/          # entity-resolution consumer + resolve CLI
 services/golden/              # golden-record consumer + golden CLI
-services/record_pipeline/     # record-at-a-time path: one record, end to end
-services/api/                 # FastAPI read API, health checks, alerts projection
+services/record_pipeline/     # record-at-a-time path: one record, end to end,
+                              #   plus the watcher that loads dropped files
+services/api/                 # FastAPI: read API, review console, health, alerts
 
 tools/ops/                    # run against a live stack: backup, restore, reblock, loaders
 tools/measure/                # benchmarks, parity, coverage, profiling
@@ -60,6 +63,7 @@ docs/decisions/               # numbered ADRs: why each stage is shaped as it is
 docs/reports/                 # status and delivery-timeline pages for non-engineers
 
 data/inbox/fixtures/          # synthetic files the guides refer to (committed)
+data/inbox/watch/             # one directory per feed; drop files in, they load
 data/inbox/                   # local drop dir, bind-mounted into the containers
 testfiles/                    # real vendor exports (gitignored: they carry personal data)
 ```
@@ -116,16 +120,20 @@ The repository was built incrementally, and each increment has an ADR.
 | 12 | Record-at-a-time processing: a record's fate stops depending on the rows it shared a file with | [0012](docs/decisions/0012-record-at-a-time-processing.md) |
 | 13 | The employer named in a person row becomes a company entity, linked by `employed_at` | [0013](docs/decisions/0013-employer-as-an-entity.md) |
 | 14 | The commercial profile: nine captured-but-ignored vendor columns get a canonical home, plus `money` and `date` value types | [0014](docs/decisions/0014-commercial-profile-and-enrichment.md) |
+| 15 | Operable by someone else: a review console, feeds that load themselves, credentials from files, alerts with somewhere to go | [0015](docs/decisions/0015-operable-by-someone-else.md) |
 
 ## Future increments
 
-- **Re-blocking** — two entities that should have merged stay separate until a
-  third record matches both. Nothing re-examines old entities when new keys
-  arrive.
-- **Secrets** — credentials are plaintext in `.env`. Non-root containers and API
-  keys are done; a real secret store is not.
-- **Re-blocking with source semantics** — `source.describes` now tells
-  resolution whether a shared domain means the same company or merely the same
-  brand. Entities created before it was set were resolved without it, so the
-  duplicates already in the database still need a pass; `tools/ops/reblock.py`
-  reports them.
+- **Deployment beyond one machine** — Docker Compose is the only deployment.
+  Single Postgres, single Kafka broker, no orchestration and no staging
+  environment. Fine for one machine; not fine for an uptime commitment.
+- **A real secret store** — credentials can now come from files, and
+  `docker-compose.secrets.yml` wires Compose secrets through that seam. What sits
+  behind the seam is still a file on a disk rather than Vault or a cloud KMS.
+- **Scheduled collection** — the watcher loads a file the moment it appears, but
+  something still has to put it there. No SFTP poll, no vendor API client.
+- **Re-blocking as a pass, not a report** — `tools/ops/reblock.py` now applies
+  today's source semantics to keys written before they existed, so its report is
+  trustworthy. Acting on it is still deliberate, behind `--merge --confirm` and a
+  backup, and that is on purpose: see
+  [ADR 0015](docs/decisions/0015-operable-by-someone-else.md).

@@ -1,0 +1,46 @@
+# The `migrate` Compose service as a Job instead of a container that starts,
+# runs once and exits under `restart: unless-stopped` -- Kubernetes has a
+# purpose-built object for exactly that shape and Compose does not.
+#
+# Not wired as a Helm pre-install hook or an initContainer on every consumer:
+# this repository has no Helm chart (see infra/k8s/README.md for why), and an
+# initContainer per Deployment would run the same migration five times
+# concurrently on first rollout. Apply this and wait for it to complete before
+# applying the Deployments in 2x-*.yaml -- the deploy order is spelled out in
+# infra/k8s/README.md.
+#
+# Compose additionally bind-mounts ./db over the image's baked-in copy, so a
+# migration added on disk is picked up without a rebuild. There is no host to
+# bind from here, so this Job runs whatever db/migrations/ the image was built
+# with -- correct for a versioned artifact, but it means a new migration
+# requires rebuilding pcdf-ingestion before it takes effect.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: pcdf
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: pcdf-ingestion:local
+          command: ["uv", "run", "--frozen", "--no-sync", "python", "-m", "common.migrations"]
+          envFrom:
+            - configMapRef:
+                name: pcdf-config
+          # No POSTGRES_PASSWORD env var here: common.config.resolve() finds
+          # the mounted secret at /run/secrets/postgres_password on its own.
+          volumeMounts:
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: secrets
+          secret:
+            secretName: pcdf-secrets
+            items:
+              - key: postgres_password
+                path: postgres_password

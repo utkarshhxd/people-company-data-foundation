@@ -18,6 +18,7 @@ that gets skipped.
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -69,9 +70,38 @@ class Settings(BaseSettings):
     postgres_password: str = "postgres"
     postgres_db: str = "postgres"
 
-    kafka_bootstrap_servers: str = "localhost:9092"
-
     log_level: str = "info"
+
+    # Named on every connection so `pg_stat_activity` says which service is
+    # holding a lock. Overridden per service at startup; the default is only
+    # what an unconfigured process reports.
+    application_name: str = "pcdf"
+    # Bounded waits, both. A database that accepts the connection and then
+    # stops answering is the failure mode these exist for: without a limit the
+    # caller waits forever, and a request handler that waits forever is a
+    # worker that never serves anyone again. Ten seconds to connect is far more
+    # than a healthy local network needs; five minutes for a statement is far
+    # more than any query here should take, and still finite.
+    connect_timeout_seconds: int = 10
+    statement_timeout_ms: int = 300_000
+
+    # A local, self-hosted model -- deliberately not a cloud API, so nothing
+    # here sends vendor data anywhere. `ollama_model` defaults to a small model
+    # suitable for testing; swap it for a larger one without touching any
+    # caller, since every AI-assisted path only ever asks for JSON matching a
+    # fixed shape and treats a bad or missing answer as "no opinion".
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "gemma3:4b"
+    ollama_timeout_seconds: float = 60.0
+    # Off by default: schema mapping runs inline on the ingest path, so leaving
+    # this on unconditionally would make every deployment depend on a reachable
+    # model just to load a file. Opt in once Ollama is actually running.
+    ai_mapping_enabled: bool = False
+    # Reliability of the synthetic source the enrichment job writes through.
+    # Deliberately low and below every real vendor's default (0.50): a field
+    # with no other reported value may still take an AI guess, but the moment a
+    # single vendor reports one, survivorship must prefer the vendor.
+    ai_enrichment_reliability: float = 0.20
 
     @model_validator(mode="before")
     @classmethod
@@ -99,12 +129,55 @@ class Settings(BaseSettings):
                 values[name] = found
         return values
 
+    def dsn(
+        self,
+        statement_timeout_ms: int | None = None,
+        application_name: str | None = None,
+    ) -> str:
+        """A connection URL that survives whatever the password actually is.
+
+        Every part supplied by an operator is percent-encoded. Without that, a
+        password containing `@`, `:`, `/` or `#` -- which is to say most
+        generated passwords, and exactly what `.env.example` tells people to
+        write into `secrets/postgres_password` -- does not fail: it silently
+        re-parses into a different connection. `p@ss:w/rd` yields host `ss`,
+        port `w`, and a one-character password, so the service spends its life
+        trying to reach a host nobody named.
+
+        `connect_timeout` and `statement_timeout` are here rather than at each
+        call site because the failure they prevent is the same everywhere: a
+        Postgres that accepts the TCP connection and then never answers holds
+        the caller forever, and "forever" in the console is a threadpool worker
+        that never comes back. A bounded wait turns that into an error a
+        caller can report.
+
+        Both are overridable for the one caller that must not inherit them:
+        migrations, where a `CREATE INDEX` over a large table legitimately runs
+        longer than any query a service issues, and killing one halfway is
+        strictly worse than waiting. Postgres reads `statement_timeout=0` as
+        "no limit", so disabling is a value rather than an absent parameter.
+        """
+        timeout = (
+            self.statement_timeout_ms
+            if statement_timeout_ms is None
+            else statement_timeout_ms
+        )
+        name = application_name or self.application_name
+        user = quote(self.postgres_user, safe="")
+        password = quote(self.postgres_password, safe="")
+        database = quote(self.postgres_db, safe="")
+        return (
+            f"postgresql://{user}:{password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{database}"
+            f"?connect_timeout={self.connect_timeout_seconds}"
+            f"&application_name={quote(name, safe='')}"
+            f"&options={quote(f'-c statement_timeout={timeout}', safe='')}"
+        )
+
     @property
     def postgres_dsn(self) -> str:
-        return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        """The DSN every service connects with, no overrides applied."""
+        return self.dsn()
 
 
 settings = Settings()

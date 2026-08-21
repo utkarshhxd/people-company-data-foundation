@@ -1,64 +1,52 @@
-# Review console
+# Review queues
 
-Working the three queues that stop and ask for a human, in a browser or a terminal.
+Working the queues that stop and ask for a human.
 
 Part of the [People & Company Data Foundation](../../README.md).
 
-Three stages refuse to guess and file the question instead:
+Four stages refuse to guess and file the question instead:
 
 | Queue | Stopped because | Deciding it means |
 | --- | --- | --- |
 | **Schema mappings** | A column could be one of several canonical fields, or none | Saying which field it is, once, for every future file of that layout |
 | **Possible duplicates** | A match was plausible but not certain | Saying whether two entities are one real thing |
-| **Quarantined records** | A record failed validation with an error | Saying whether to use it anyway or confirm it is unusable |
+| **Quarantined records** | A record failed validation with an error | Saying whether to use it anyway or confirm it's unusable |
+| **Enrichment proposals** | A local model guessed a field no vendor reported | Saying whether the guess becomes a real observation — see [AI assistance](ai-assistance.md) |
 
 Nothing ages out of these queues on its own. A record can sit in quarantine
-indefinitely without anything being lost — and without anyone noticing, which is
-why the [alerts](operations.md) watch their *age* rather than their depth.
+indefinitely without anything being lost — and without anyone noticing,
+which is why it's worth checking periodically rather than assuming silence
+means empty.
 
-## The console
+## In a browser
 
+`services/review_console` is a small standalone service — one page, no build
+step — that starts with the stack:
+
+```bash
+docker compose up -d
+open http://localhost:8000/review/page
 ```
-http://localhost:8000/review/page
-```
 
-Type your name once; every decision is recorded against it, permanently. If the
-API has keys configured, a key box appears — the page is a shell and the requests
-it makes carry the key, which is why the shell itself is not behind one.
+Want this alongside the [pipeline dashboard](dashboard.md) in one page,
+tabbed, instead of two? `http://localhost:8000/admin/page` is the same
+queues and the same decision endpoints, combined; both pages keep working
+on their own too.
 
-Each queue shows the evidence rather than the identifiers:
+It writes nothing of its own. Every button posts to an endpoint that calls
+the exact same function the terminal commands below call
+(`mapping.repository.set_mapping`, `resolution.pipeline.accept_candidate`,
+`validation.quarantine.review`, `enrichment.pipeline.accept`), so a decision
+made in the browser and the same decision made in a terminal are the same
+code path — and, unlike the terminal path below, the browser path also runs
+the follow-through automatically (see "What a decision sets in motion").
 
-- **A mapping** shows six real values from the column's own file and the
-  alternatives the engine considered and rejected. The right answer is often the
-  second one. Click an alternative to fill it in, or type any canonical field —
-  the box is backed by the full vocabulary with descriptions.
-- **A possible duplicate** shows the two entities side by side with the differing
-  fields marked. "Already in the database" is the survivor; "this record" is what
-  would be folded into it.
-- **A quarantined record** shows every failing rule with the exact source cell it
-  objected to, so "is this usable" is answerable without opening the file.
+It shows personal data with full provenance attached, so it is gated the same
+way as everything else that does: unset `PCDF_API_KEYS` and
+`PCDF_ALLOW_UNAUTHENTICATED` and it serves only to loopback; set one to open
+it up. See `.env.example` and `services/review_console/src/review_console/auth.py`.
 
-## What a decision sets in motion
-
-Two of them do more than close the queue item, because leaving these to be
-remembered meant they were forgotten:
-
-**Accepting a merge rebuilds the survivor's golden record.** Without it the
-trusted values stay computed from half the observations — the absorbed entity's
-sources are attached but never consulted.
-
-**Releasing a record from quarantine resolves it and builds it.** A released
-record is *resolvable*; nothing resolves it. Before this it sat in a state no
-queue showed.
-
-Both are batch-scoped and skip work already done, so releasing one record out of
-a 190,000-row batch costs one record. If the follow-through fails, the response
-says so and gives the command to finish it by hand — the decision itself has
-already committed, and reporting success would be a lie.
-
-## The same decisions from a terminal
-
-The console delegates to these; they are not a second implementation.
+## Working a queue
 
 ```bash
 # schema mappings
@@ -76,51 +64,56 @@ docker compose run --rm validation quarantine list --status open
 docker compose run --rm validation quarantine show --record-id <id>
 docker compose run --rm validation quarantine release --record-id <id> --reviewed-by you \
     --note "checked against the source file"
+
+# enrichment proposals
+docker compose run --rm enrichment enrich proposals list --status pending
+docker compose run --rm enrichment enrich proposals accept --proposal-id <id> --reviewed-by you
+docker compose run --rm enrichment enrich proposals reject --proposal-id <id> --reviewed-by you
 ```
 
-The CLIs do **not** carry the follow-through the API does. After a terminal
-`accept`, run `golden build --entity-id <survivor>`; after a terminal `release`,
-run `resolve run --batch-id <id>` and then `golden build --batch-id <id>`.
+`reviewed_by` is required and cannot be empty on any of these.
 
-## The endpoints
+## What a decision sets in motion
 
-Everything the console shows is served as JSON, and everything it does is a POST.
+None of these CLIs carry follow-through — deciding closes the queue item and
+nothing else. Run the next step by hand:
+
+**After accepting a merge**, rebuild the survivor's golden record:
 
 ```bash
-KEY=your-api-key
-
-# how much is waiting, and how long the oldest has waited
-curl -H "X-API-Key: $KEY" localhost:8000/review/summary
-
-curl -H "X-API-Key: $KEY" 'localhost:8000/review/mappings?status=needs_review'
-curl -H "X-API-Key: $KEY" 'localhost:8000/review/candidates?status=open'
-curl -H "X-API-Key: $KEY" 'localhost:8000/review/quarantine?status=open'
-curl -H "X-API-Key: $KEY" "localhost:8000/review/quarantine/$RECORD"
-
-# the vocabulary a column may be mapped to
-curl -H "X-API-Key: $KEY" localhost:8000/review/fields/person
-
-# decisions
-curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"canonical_field":"work_phone","reviewed_by":"you"}' \
-  "localhost:8000/review/mappings/$MAPPING"
-
-curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"accept":true,"reviewed_by":"you","note":"same company"}' \
-  "localhost:8000/review/candidates/$CANDIDATE"
-
-curl -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"action":"release","reviewed_by":"you","note":"checked by hand"}' \
-  "localhost:8000/review/quarantine/$RECORD"
+docker compose run --rm golden golden build --entity-id <survivor>
 ```
 
-`reviewed_by` is required and cannot be empty. A decision the data does not allow
-— a record already released, a candidate already closed, a field outside the
-vocabulary — is a `409` with the reason, not a `500`.
+Without it the trusted values stay computed from half the observations — the
+absorbed entity's sources are attached but never consulted.
 
-## What this API will never do
+**After releasing a record from quarantine**, resolve and build it:
 
-It writes a human's decision about a value the pipeline already stopped on. It
-does not write a value. An endpoint that could set a golden value directly would
-create records nothing can explain, which is the one thing this system exists to
-prevent.
+```bash
+docker compose run --rm resolution resolve run --batch-id <id>
+docker compose run --rm golden golden build --batch-id <id>
+```
+
+A released record is *resolvable*; nothing resolves it on its own. Both are
+batch-scoped and skip work already done, so releasing one record out of a
+huge batch costs one record's worth of work, not the batch.
+
+**After accepting an enrichment proposal**, rebuild that entity's golden
+record:
+
+```bash
+docker compose run --rm golden golden build --entity-id <id>
+```
+
+Accepting writes the observation; it does not fold it into the trusted
+value on its own.
+
+## What lands in quarantine for a mapping reason vs. a data reason
+
+Worth telling apart when triaging: `record.has_identifier` failing because a
+row has genuinely no email/name/website is a **data** problem — the row is
+what it is. The same failure because the mapping is stuck at `needs_review`
+(so a real `company_name` column isn't being read as one yet) is a
+**mapping** problem — approve the mapping, re-run normalize/validate, and
+the quarantined rows that were only blocked by the mapping close themselves
+as `resolved`, no human needed per row.

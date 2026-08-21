@@ -1,0 +1,108 @@
+# Single instance, same as Compose. Kubernetes gives it a stable node, a
+# stable volume across restarts and reschedules, and a stable DNS name -- real
+# gains over one machine -- but not failover: a second replica of Postgres
+# with its own disk is a second, empty database, not a standby. Real HA here
+# means streaming replication (Patroni, CloudNativePG) and is out of scope for
+# this pass; see infra/k8s/README.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: pcdf
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: pcdf
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      # Alpine's postgres image chowns its own data directory on first start;
+      # this only has to be true from the container's own point of view, so no
+      # extra securityContext is needed beyond what the image already does.
+      containers:
+        - name: postgres
+          image: postgres:18.4-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: pcdf-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: pcdf-config
+                  key: POSTGRES_DB
+            # The image's own convention, distinct from common.config's
+            # NAME_FILE indirection -- this is what makes the official image
+            # read the mounted secret instead of wanting POSTGRES_PASSWORD set.
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/postgres_password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: secrets
+          secret:
+            secretName: pcdf-secrets
+            # postgres_password is the only key this container needs; the API
+            # key and Grafana password stay out of a pod that has no use for
+            # them.
+            items:
+              - key: postgres_password
+                path: postgres_password
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            # 190k-record / 11.8M-observation scale measured in the README fit
+            # comfortably here; resize before a much larger load. No
+            # storageClassName pinned -- the cluster's default is used, which
+            # is the right choice until you know you need another.
+            storage: 20Gi

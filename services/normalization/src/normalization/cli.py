@@ -1,9 +1,9 @@
 import argparse
 import json
-import logging
 import sys
 
 from common.db import connect
+from common.logging import configure
 from psycopg.rows import dict_row
 
 from normalization.pipeline import BatchNotNormalizable, normalize_batch
@@ -55,7 +55,7 @@ def print_observations(batch_id: str, limit: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("normalization")
 
     try:
         result = normalize_batch(args.batch_id)

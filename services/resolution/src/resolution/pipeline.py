@@ -58,6 +58,11 @@ def candidates_for(conn, entity_type: str, keys: list[IdentityKey]):
     the other way would let one organisation-source entity pull in every branch
     that happens to share its domain.
     """
+    # Locked before the read: this is the one place every resolution path
+    # funnels through (a person or company record's own resolution, and an
+    # employer's), so a lock here closes the create-entity race for all of
+    # them. See repository.lock_keys for what it prevents.
+    repository.lock_keys(conn, entity_type, keys)
     rows = repository.find_candidates(
         conn, entity_type, [(k.key_type, k.key_value) for k in keys]
     )
@@ -227,7 +232,9 @@ def resolve_batch(batch_id: str) -> ResolveResult:
 def accept_candidate(candidate_id: str, actor: str, note: str | None) -> dict:
     """Accept a proposed match: merge the record's entity into the candidate's."""
     with connect() as conn:
-        candidate = repository.get_candidate(conn, candidate_id)
+        # Locked: accept is a read-check-merge-close sequence, and two of
+        # them running at once would both pass the check and both merge.
+        candidate = repository.get_candidate(conn, candidate_id, for_update=True)
         if candidate is None:
             raise BatchNotResolvable(f"candidate {candidate_id} not found")
         if candidate["status"] != "open":
@@ -259,7 +266,7 @@ def reject_candidate(candidate_id: str, actor: str, note: str | None) -> None:
     """Reject a proposed match. Both entities stay separate, which is the whole
     point of not having merged them automatically."""
     with connect() as conn:
-        candidate = repository.get_candidate(conn, candidate_id)
+        candidate = repository.get_candidate(conn, candidate_id, for_update=True)
         if candidate is None:
             raise BatchNotResolvable(f"candidate {candidate_id} not found")
         if candidate["status"] != "open":

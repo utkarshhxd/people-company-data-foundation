@@ -1,12 +1,9 @@
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
-from common import events
 from common.db import connect
-from common.kafka import EventProducer, ensure_topics
 
 from ingestion import repository
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_file
@@ -25,7 +22,6 @@ class IngestResult:
     rows_read: int
     rows_ingested: int
     rows_skipped: int
-    events_published: bool
 
 
 def file_hash(path: Path) -> str:
@@ -59,7 +55,8 @@ def ingest(
     record_id_column: str | None = None,
     allow_reingest: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    describes: str | None = None
+    describes: str | None = None,
+    sheet: str | None = None,
 ) -> IngestResult:
     digest = file_hash(path)
     size = path.stat().st_size
@@ -113,7 +110,7 @@ def ingest(
             # ingest in a single transaction; neither is necessary, because a
             # batch only becomes visible downstream once its status is
             # 'completed', which happens after the last batch lands.
-            for columns, rows in iter_file(path, batch_size):
+            for columns, rows in iter_file(path, batch_size, sheet):
                 # Recorded from the first batch. The reader's order is the file's
                 # order, and it is what the layout's fingerprint is taken over --
                 # raw_payload is jsonb and will not give it back.
@@ -150,51 +147,11 @@ def ingest(
         conn.commit()
         logger.info("batch %s committed %d record(s)", batch_id, rows_ingested)
 
-        # Only now, with rows committed, publish references to them. Publishing
-        # reads back committed rows so an event can never point at a row that
-        # doesn't exist.
-        published = _publish(conn, batch_id, source_id, entity_type, path.name, rows_ingested)
-
     return IngestResult(
         batch_id=batch_id,
         source_id=source_id,
         rows_read=rows_read,
         rows_ingested=rows_ingested,
         rows_skipped=0,
-        events_published=published,
     )
-
-
-def _publish(
-    conn, batch_id: str, source_id: str, entity_type: str, file_name: str, rows_ingested: int
-) -> bool:
-    # One event per batch, not one per row. The per-record event had no
-    # subscriber — every stage works batch-wise and reads rows from Postgres —
-    # so a 20,000-row file was producing 20,000 messages that nothing consumed.
-    # Kafka carries references, and the batch id is the reference that matters.
-    try:
-        ensure_topics()
-        producer = EventProducer()
-        producer.publish(
-            events.TOPIC_BATCH_INGESTED,
-            key=batch_id,
-            event=events.batch_ingested(
-                batch_id,
-                source_id,
-                entity_type,
-                file_name,
-                rows_ingested,
-                datetime.now(UTC),
-            ),
-        )
-        producer.flush()
-    except Exception as exc:
-        # Rows are committed and the batch is 'completed'. Leaving
-        # events_published_at NULL makes the gap visible and replayable rather
-        # than failing the whole ingestion after the data has already landed.
-        logger.error("batch %s ingested but publishing failed: %s", batch_id, exc)
-        return False
-
-    repository.mark_events_published(conn, batch_id)
-    logger.info("batch %s published batch.ingested for %d row(s)", batch_id, rows_ingested)
     return True

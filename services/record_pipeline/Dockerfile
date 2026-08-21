@@ -26,6 +26,13 @@ COPY services/record_pipeline/src services/record_pipeline/src
 COPY services/record_pipeline/tests services/record_pipeline/tests
 RUN uv sync --frozen --package record-pipeline-service
 
+# Baked in rather than bind-mounted: a bind mount assumes the container is
+# scheduled on a host that has this repository checked out, which is not true
+# once pods can land on any node in a cluster. `docker compose run --rm
+# pipeline python /tools/ops/reblock.py` and its neighbours keep working
+# unmodified -- same path, no longer host-dependent.
+COPY tools/ tools/
+
 ENV PCDF_MIGRATIONS_DIR=/app/db/migrations
 ENV PYTHONPATH=/app/services/record_pipeline/src
 WORKDIR /app/services/record_pipeline

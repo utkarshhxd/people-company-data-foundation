@@ -1,0 +1,48 @@
+[project]
+name = "review-console-service"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.6",
+    # File uploads: FastAPI's Form()/File()/UploadFile parsing needs this,
+    # even though nothing here imports it by name.
+    "python-multipart>=0.0.9",
+    "common",
+    # The console decides nothing itself. Every decision goes through the same
+    # functions the review CLIs call, so a decision made in a browser and the
+    # same decision made in a terminal cannot diverge.
+    "ingestion-service",
+    "mapping-service",
+    "normalization-service",
+    "validation-service",
+    "resolution-service",
+    "golden-service",
+    "enrichment-service",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.7",
+]
+
+[tool.uv.sources]
+common = { workspace = true }
+ingestion-service = { workspace = true }
+mapping-service = { workspace = true }
+normalization-service = { workspace = true }
+validation-service = { workspace = true }
+resolution-service = { workspace = true }
+golden-service = { workspace = true }
+enrichment-service = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/review_console"]

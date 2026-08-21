@@ -264,9 +264,15 @@ def process_file(feed: Feed, path: Path) -> Handled:
 class Watcher:
     """Poll the watch root, process what has settled, and keep going."""
 
-    def __init__(self, root: Path, poll_seconds: float = DEFAULT_POLL_SECONDS):
+    def __init__(
+        self,
+        root: Path,
+        poll_seconds: float = DEFAULT_POLL_SECONDS,
+        heartbeat: Path | None = None,
+    ):
         self.root = root
         self.poll_seconds = poll_seconds
+        self.heartbeat = heartbeat if heartbeat is not None else default_heartbeat()
         self._stop = False
         # Fingerprint of each file as last seen, so "unchanged since last poll"
         # is answerable without holding the file open.
@@ -295,6 +301,22 @@ class Watcher:
             return False
         return before == now
 
+    def _beat(self) -> None:
+        """Record that a sweep completed. Never fatal.
+
+        A watcher that cannot write its heartbeat is still a watcher that can
+        load files, and stopping over it would trade a monitoring gap for an
+        outage. The healthcheck reads staleness, so a file that stops being
+        updated says the same thing as one that was never written.
+        """
+        try:
+            self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
+            self.heartbeat.write_text(
+                datetime.now(UTC).isoformat(), encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning("could not write heartbeat %s: %s", self.heartbeat, exc)
+
     def _complain_once(self, problems: list[str]) -> None:
         """Say what is wrong with a feed the first time, not every ten seconds."""
         for problem in problems:
@@ -317,6 +339,11 @@ class Watcher:
                     continue
                 self._seen.pop(path, None)
                 handled.append(process_file(feed, path))
+                # A backlog of large files is one long sweep, and each file
+                # finishing is proof of life. Without this the heartbeat only
+                # moves between sweeps, so working through a queue would look
+                # exactly like being stuck on the first item.
+                self._beat()
         return handled
 
     def run(self) -> int:
@@ -328,6 +355,7 @@ class Watcher:
         for received in (signal.SIGTERM, signal.SIGINT):
             signal.signal(received, self.request_stop)
 
+        self._beat()
         while not self._stop:
             try:
                 self.sweep()
@@ -335,6 +363,12 @@ class Watcher:
                 # A failure in the sweep itself — an unreadable directory, a
                 # permission change — must not end the process either.
                 logger.exception("sweep failed; continuing")
+            # After the sweep, not before: the point is to prove a sweep
+            # finished, not that the loop was entered. A watcher wedged inside
+            # one — a query that never returns, a file that never finishes
+            # reading — is still an "up" container with `restart:
+            # unless-stopped`, and looks identical to an idle one from outside.
+            self._beat()
             # Slept in slices so a stop is acted on in a second, not a poll.
             waited = 0.0
             while waited < self.poll_seconds and not self._stop:
@@ -348,3 +382,13 @@ class Watcher:
 def default_root() -> Path:
     """Where to watch, overridable so the container and a laptop can differ."""
     return Path(os.environ.get("PCDF_WATCH_DIR", "/data/inbox/watch"))
+
+
+def default_heartbeat() -> Path:
+    """Where the liveness file lives.
+
+    Deliberately not inside the watch root: everything under there is either a
+    feed directory or something a feed would try to load, and a heartbeat is
+    neither.
+    """
+    return Path(os.environ.get("PCDF_WATCH_HEARTBEAT", "/tmp/pcdf-watcher-heartbeat"))

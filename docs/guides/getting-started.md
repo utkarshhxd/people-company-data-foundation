@@ -7,7 +7,7 @@ Part of the [People & Company Data Foundation](../../README.md).
 ## Prerequisites
 
 - Docker Desktop (or engine) with Compose v2
-- [uv](https://docs.astral.sh/uv/) for local (non-Docker) Python development
+- [uv](https://docs.astral.sh/uv/) — only needed for local (non-Docker) Python work
 
 ## Quickstart
 
@@ -17,40 +17,61 @@ Copy-Item .env.example .env
 
 docker compose build
 docker compose up -d
-docker compose ps    # wait until every service shows (healthy)
+docker compose ps    # postgres, migrate (Exited 0), watcher — all up
 ```
 
-> Note: the dockerized Postgres is mapped to host port **5433** by default
-> (`POSTGRES_PORT` in `.env`), not 5432 — this avoids clashing with a
-> Postgres instance that may already be running natively on this machine.
-> **Connect pgAdmin to `localhost:5433`**, not 5432; there is no native install
-> to find, and the data lives in the `pcdf_postgres-data` Docker volume.
->
-> Grafana is on **3001** for the same reason: 3000 is the port every Node dev
-> server wants, and when it is already taken Docker Desktop can leave the
-> container up and healthy but unreachable from the host rather than failing
-> loudly. If a page on one of these ports looks like somebody else's app, it is.
+Three things start by default: `postgres`, the `migrate` job (applies every
+migration, then exits — `Exited 0` is success, not a crash), and `watcher`
+(polls `data/inbox/watch/` every 10s for files to load). Everything else —
+`ingestion`, `pipeline`, `mapping`, `normalization`, `validation`,
+`resolution`, `golden` — is CLI-only and only runs when you call it:
+
+```powershell
+docker compose run --rm pipeline process --help
+```
+
+> **Postgres is on host port `5433`, not 5432** (`POSTGRES_PORT` in `.env`) —
+> deliberately, to avoid clashing with a native Postgres already on this
+> machine. Connect pgAdmin or `psql` to `localhost:5433`. Data lives in the
+> `pcdf_postgres-data` Docker volume, not on the host filesystem.
 
 ## Verifying the stack
 
 ```powershell
-# Liveness (no downstream checks)
-curl.exe -i http://localhost:8000/health/live
-
-# Readiness (actively checks Postgres + Kafka connectivity)
-curl.exe -i http://localhost:8000/health/ready
-
-# Prometheus metrics exposition
-curl.exe -i http://localhost:8000/metrics
-
-# Prometheus itself
-curl.exe -i http://localhost:9090/-/healthy
-curl.exe "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22api-service%22%7D"
-
-# Grafana (provisioned Prometheus datasource + starter dashboard)
-curl.exe -i http://localhost:3001/api/health
+docker compose ps
+docker compose exec postgres pg_isready -U pcdf_dev -d pcdf
+docker compose logs watcher --tail 20
 ```
 
-Open http://localhost:3001 (credentials from `.env`) and check
-Connections > Data sources > Prometheus > "Save & test", and the
-"Service Health" dashboard under Dashboards.
+## The fastest real test
+
+Make a feed, drop a file, watch it load — no flags to remember, no command to
+type per file:
+
+```powershell
+mkdir data/inbox/watch/my_first_feed
+@'
+{"entity_type": "company", "source_name": "my_first_feed", "reliability": 0.5, "describes": "organisation"}
+'@ | Set-Content -Encoding utf8 data/inbox/watch/my_first_feed/feed.json
+
+Copy-Item your_file.csv data/inbox/watch/my_first_feed/
+docker compose logs -f watcher
+```
+
+Two things decide whether this works cleanly the first time:
+
+1. **The file needs a real header row.** If row 1 is already data (no column
+   labels), the mapper has nothing to go on and every row ends up
+   `needs_review` or `unmapped` — which cascades into every row failing
+   `record.has_identifier` and landing in quarantine. Open the file and check
+   row 1 before dropping it in.
+2. **`entity_type` in `feed.json` has to match what the rows actually are.**
+   Person data (name, title, email) dropped into a feed declared
+   `entity_type: company` won't always fail loudly — a `Company` column can
+   still pass as a company identifier, silently creating company entities out
+   of person data instead of quarantining. Check the file's actual columns
+   before writing `feed.json`, not after.
+
+See [Watched feeds](../../data/inbox/watch/README.md) for the full mechanism,
+and [Processing files](processing-files.md) for loading one file by hand
+instead.

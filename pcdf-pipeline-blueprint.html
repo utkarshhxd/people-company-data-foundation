@@ -1,0 +1,959 @@
+<title>Golden Record Pipeline</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --paper:#F2F3F6;
+    --surface:#FFFFFF;
+    --surface-2:#E9EBF1;
+    --ink:#12151C;
+    --ink-soft:#4A5063;
+    --ink-faint:#7B8092;
+    --line:#D6D9E2;
+    --line-strong:#B7BCCB;
+    --accent:#2B4EE0;
+    --accent-soft:#E6EAFC;
+    --good:#187A50;
+    --good-soft:#E1F3EA;
+    --warn:#A8690C;
+    --warn-soft:#FBEDD8;
+    --bad:#B23434;
+    --bad-soft:#FBE6E6;
+    --ai:#6B3FD1;
+    --ai-soft:#EFE7FC;
+    --shadow: 0 1px 2px rgba(18,21,28,0.06), 0 8px 24px -12px rgba(18,21,28,0.12);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0D0F14;
+      --surface:#161922;
+      --surface-2:#1D2130;
+      --ink:#E9EAF0;
+      --ink-soft:#AEB2C4;
+      --ink-faint:#787E93;
+      --line:#2B3040;
+      --line-strong:#3B415470;
+      --accent:#7C93FF;
+      --accent-soft:#20264A;
+      --good:#4FCB93;
+      --good-soft:#132A22;
+      --warn:#E3A94B;
+      --warn-soft:#2E2312;
+      --bad:#EB6E6E;
+      --bad-soft:#301616;
+      --ai:#B79BFF;
+      --ai-soft:#241A3D;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 28px -14px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0D0F14;
+    --surface:#161922;
+    --surface-2:#1D2130;
+    --ink:#E9EAF0;
+    --ink-soft:#AEB2C4;
+    --ink-faint:#787E93;
+    --line:#2B3040;
+    --line-strong:#3B415470;
+    --accent:#7C93FF;
+    --accent-soft:#20264A;
+    --good:#4FCB93;
+    --good-soft:#132A22;
+    --warn:#E3A94B;
+    --warn-soft:#2E2312;
+    --bad:#EB6E6E;
+    --bad-soft:#301616;
+    --ai:#B79BFF;
+    --ai-soft:#241A3D;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 28px -14px rgba(0,0,0,0.6);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    margin:0;
+    padding:0 0 96px;
+  }
+  ::selection{ background:var(--accent-soft); color:var(--ink); }
+
+  a{ color:var(--accent); }
+
+  .wrap{ max-width:1280px; margin:0 auto; padding:0 32px; }
+  .prose{ max-width:68ch; }
+
+  /* ---------- Header ---------- */
+  header.top{
+    border-bottom:1px solid var(--line);
+    padding:56px 0 32px;
+  }
+  .eyebrow{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:12.5px;
+    letter-spacing:0.09em;
+    text-transform:uppercase;
+    color:var(--accent);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:14px;
+  }
+  .eyebrow::before{
+    content:"";
+    width:22px; height:1px;
+    background:var(--accent);
+    display:inline-block;
+  }
+  h1{
+    font-family:"IBM Plex Sans", sans-serif;
+    font-weight:700;
+    font-size:clamp(32px, 4.4vw, 50px);
+    line-height:1.06;
+    letter-spacing:-0.015em;
+    margin:0 0 16px;
+    text-wrap:balance;
+  }
+  .lede{
+    font-family:"IBM Plex Serif", Georgia, serif;
+    font-style:italic;
+    font-size:19px;
+    line-height:1.55;
+    color:var(--ink-soft);
+    max-width:64ch;
+    margin:0;
+  }
+
+  /* legend strip */
+  .legend{
+    margin-top:32px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:22px 32px;
+    padding:16px 20px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:4px;
+  }
+  .legend-item{
+    display:flex; align-items:center; gap:9px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+    white-space:nowrap;
+  }
+  .legend-swatch{ width:26px; height:0; border-top-width:2.5px; border-top-style:solid; flex:none; }
+  .legend-swatch.dashed{ border-top-style:dashed; }
+  .legend-swatch.dotted{ border-top-style:dotted; border-top-width:3px; }
+  .legend-dot{
+    width:15px; height:15px; border-radius:50%;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; color:#fff; flex:none;
+    font-family:"IBM Plex Mono", monospace;
+  }
+
+  /* ---------- Section shell ---------- */
+  section{ padding:56px 0; border-bottom:1px solid var(--line); }
+  section:last-of-type{ border-bottom:none; }
+  .section-head{ margin-bottom:28px; }
+  .section-num{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12.5px;
+    color:var(--ink-faint);
+    letter-spacing:0.06em;
+  }
+  h2{
+    font-size:26px;
+    font-weight:600;
+    letter-spacing:-0.01em;
+    margin:6px 0 10px;
+    text-wrap:balance;
+  }
+  .section-desc{
+    font-family:"IBM Plex Serif", Georgia, serif;
+    color:var(--ink-soft);
+    font-size:16px;
+    line-height:1.6;
+    max-width:70ch;
+  }
+
+  /* ---------- Diagram frame (blueprint sheet) ---------- */
+  .sheet{
+    position:relative;
+    background:var(--surface);
+    border:1px solid var(--line-strong);
+    border-radius:6px;
+    box-shadow:var(--shadow);
+    padding:26px;
+  }
+  .sheet::before, .sheet::after,
+  .sheet .tick-tl, .sheet .tick-br{
+    content:"";
+    position:absolute;
+    width:16px; height:16px;
+    border-color:var(--ink-faint);
+    opacity:0.55;
+  }
+  .sheet::before{ top:10px; left:10px; border-top:1.5px solid; border-left:1.5px solid; }
+  .sheet::after{ bottom:10px; right:10px; border-bottom:1.5px solid; border-right:1.5px solid; }
+  .sheet-scroll{
+    overflow-x:auto;
+    overflow-y:hidden;
+    padding-bottom:6px;
+  }
+  .sheet-scroll svg{ display:block; min-width:1400px; width:100%; height:auto; }
+  .sheet-caption{
+    margin-top:16px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12.5px;
+    color:var(--ink-faint);
+    display:flex;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+  }
+
+  svg text{ font-family:"IBM Plex Sans", sans-serif; }
+  svg .mono{ font-family:"IBM Plex Mono", monospace; }
+
+  /* ---------- Callout ledger ---------- */
+  .ledger{
+    margin-top:36px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    overflow:hidden;
+    background:var(--surface);
+  }
+  .ledger-row{
+    display:grid;
+    grid-template-columns:40px 190px 1fr;
+    gap:18px;
+    padding:14px 18px;
+    border-top:1px solid var(--line);
+    align-items:start;
+  }
+  .ledger-row:first-child{ border-top:none; }
+  .ledger-num{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:13px;
+    font-weight:600;
+    color:var(--accent);
+    background:var(--accent-soft);
+    border-radius:50%;
+    width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ledger-stage{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    letter-spacing:0.03em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    padding-top:4px;
+  }
+  .ledger-text{ font-size:14.5px; line-height:1.55; color:var(--ink); }
+  .ledger-text b{ font-weight:600; }
+  .ledger-text code{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12.8px;
+    background:var(--surface-2);
+    padding:1px 5px;
+    border-radius:3px;
+  }
+
+  /* ---------- Mini diagram grid ---------- */
+  .mini-grid{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    gap:20px;
+  }
+  @media (max-width:980px){ .mini-grid{ grid-template-columns:1fr; } }
+  .mini-card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:18px 18px 14px;
+    box-shadow:var(--shadow);
+  }
+  .mini-card h3{
+    font-size:15.5px;
+    font-weight:600;
+    margin:0 0 3px;
+  }
+  .mini-card .mini-sub{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:11.5px;
+    color:var(--ink-faint);
+    margin:0 0 14px;
+  }
+  .mini-card svg{ width:100%; height:auto; display:block; }
+
+  /* ---------- Reference tables ---------- */
+  .ref-grid{
+    display:grid;
+    grid-template-columns:1.1fr 1fr;
+    gap:24px;
+  }
+  @media (max-width:980px){ .ref-grid{ grid-template-columns:1fr; } }
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:6px;
+    box-shadow:var(--shadow);
+    overflow:hidden;
+  }
+  .card-head{
+    padding:14px 18px;
+    border-bottom:1px solid var(--line);
+    font-weight:600;
+    font-size:14.5px;
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+  }
+  .card-head span{
+    font-family:"IBM Plex Mono", monospace;
+    font-weight:400;
+    font-size:11.5px;
+    color:var(--ink-faint);
+  }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{
+    text-align:left;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:10.5px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    padding:10px 18px;
+    border-bottom:1px solid var(--line);
+    font-weight:500;
+  }
+  tbody td{
+    padding:10px 18px;
+    border-top:1px solid var(--line);
+    vertical-align:top;
+    color:var(--ink-soft);
+    line-height:1.45;
+  }
+  tbody td:first-child{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    color:var(--ink);
+    white-space:nowrap;
+    font-variant-numeric:tabular-nums;
+  }
+  .chip{
+    display:inline-block;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:11px;
+    padding:2px 8px;
+    border-radius:20px;
+    font-weight:500;
+    white-space:nowrap;
+  }
+  .chip.good{ background:var(--good-soft); color:var(--good); }
+  .chip.warn{ background:var(--warn-soft); color:var(--warn); }
+  .chip.bad{ background:var(--bad-soft); color:var(--bad); }
+  .chip.ai{ background:var(--ai-soft); color:var(--ai); }
+  .chip.neutral{ background:var(--surface-2); color:var(--ink-soft); }
+
+  footer{
+    margin-top:40px;
+    padding-top:24px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    color:var(--ink-faint);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="top">
+    <div class="eyebrow">PCDF &middot; system schematic</div>
+    <h1>Ingest to golden record, every branch drawn</h1>
+    <p class="lede">Eight tables of judgement, four human review queues, one rule that never bends: no value is ever discarded, only outvoted. This is the full pipeline &mdash; main spine, quarantine loop, AI-proposal loop, and the ten places it deliberately refuses to do the easy thing.</p>
+
+    <div class="legend">
+      <span class="legend-item"><span class="legend-swatch" style="border-color:var(--accent)"></span>automatic data flow</span>
+      <span class="legend-item"><span class="legend-swatch dashed" style="border-color:var(--ink-faint)"></span>human review action</span>
+      <span class="legend-item"><span class="legend-swatch" style="border-color:var(--bad)"></span>invalid / held path</span>
+      <span class="legend-item"><span class="legend-swatch" style="border-color:var(--ai)"></span>AI-proposed, human-gated</span>
+      <span class="legend-item"><span class="legend-swatch dotted" style="border-color:var(--ink-faint)"></span>system fault, not a data verdict</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--accent)">i</span>numbered edge case &mdash; see ledger below</span>
+    </div>
+  </header>
+
+  <!-- ============================================================ -->
+  <section id="main-diagram">
+    <div class="section-head">
+      <div class="section-num">01 / full pipeline</div>
+      <h2>The spine, the quarantine loop, and the AI-proposal loop</h2>
+      <p class="section-desc">One file, dropped or fed by hand, moving left to right through six stages before it becomes a golden value. Two loops peel off and rejoin: quarantine underneath validation, and the AI enrichment queue underneath resolution. The review console touches all four queues at once &mdash; scroll to see where.</p>
+    </div>
+
+    <div class="sheet">
+      <div class="sheet-scroll">
+        <svg viewBox="0 0 2200 1000" role="img" aria-label="Full PCDF pipeline: a file enters ingestion, moves through mapping, normalization, and validation, then either continues to resolution and golden record building, or is routed to a quarantine loop that rejoins resolution once a human releases it. A parallel record_error path catches system faults. A separate AI enrichment loop runs proposals past a human before they can become a new evidence source feeding back into normalization. A review console at top connects to all four human decision queues.">
+
+          <defs>
+            <marker id="ah-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+            </marker>
+            <marker id="ah-bad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--bad)"/>
+            </marker>
+            <marker id="ah-ai" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ai)"/>
+            </marker>
+            <marker id="ah-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"/>
+            </marker>
+          </defs>
+
+          <!-- ============ background grid ============ -->
+          <g stroke="var(--line)" stroke-width="1" opacity="0.5">
+            <line x1="0" y1="180" x2="2200" y2="180"/>
+            <line x1="0" y1="320" x2="2200" y2="320"/>
+          </g>
+
+          <!-- ============ CONNECTORS drawn first so boxes occlude them ============ -->
+          <g fill="none">
+            <!-- console fan-out, dashed, muted -->
+            <g stroke="var(--ink-faint)" stroke-width="1.6" stroke-dasharray="2 5" opacity="0.75">
+              <path d="M980,94 L980,120 L610,120 L610,180"/>
+              <path d="M1040,94 L1040,140 L1590,140 L1590,180"/>
+              <path d="M1100,94 L1100,160 L1160,160 L1160,440"/>
+              <path d="M1200,94 L1200,180 L1370,180 L1370,620"/>
+            </g>
+
+            <!-- record_error dotted taps -->
+            <g stroke="var(--ink-faint)" stroke-width="1.6" stroke-dasharray="1 5" stroke-linecap="round" opacity="0.8">
+              <path d="M350,320 L350,420"/>
+              <path d="M870,320 L870,372 L280,372 L280,420"/>
+              <path d="M1130,320 L1130,392 L420,392 L420,420"/>
+            </g>
+
+            <!-- main spine, solid accent -->
+            <g stroke="var(--accent)" stroke-width="2.5" marker-end="url(#ah-accent)">
+              <line x1="200" y1="280" x2="234" y2="280"/>
+              <line x1="460" y1="250" x2="494" y2="250"/>
+              <line x1="720" y1="250" x2="754" y2="250"/>
+              <line x1="980" y1="250" x2="1014" y2="250"/>
+              <line x1="1240" y1="250" x2="1278" y2="250"/>
+              <line x1="1442" y1="250" x2="1474" y2="250"/>
+              <line x1="1700" y1="250" x2="1734" y2="250"/>
+              <line x1="1960" y1="250" x2="1994" y2="250"/>
+            </g>
+
+            <!-- invalid branch, bad color -->
+            <path d="M1360,330 L1360,382 L1160,382 L1160,434" stroke="var(--bad)" stroke-width="2.5" marker-end="url(#ah-bad)"/>
+
+            <!-- quarantine -> resolution human release loop -->
+            <path d="M1300,524 L1636,524 L1636,326" stroke="var(--ink-soft)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#ah-muted)"/>
+
+            <!-- enrichment lane arrows -->
+            <g stroke="var(--ai)" stroke-width="2.2" marker-end="url(#ah-ai)">
+              <line x1="960" y1="675" x2="994" y2="675"/>
+              <line x1="1220" y1="675" x2="1254" y2="675"/>
+            </g>
+
+            <!-- enrichment accepted proposal loops back to become a source row feeding normalization -->
+            <path d="M1160,730 L1160,800 L130,800 L130,334" stroke="var(--ai)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah-ai)"/>
+          </g>
+
+          <!-- ============ edge labels ============ -->
+          <g class="mono" font-size="11.5" fill="var(--ink-faint)">
+            <text x="217" y="272">read</text>
+            <text x="1290" y="272">valid / warning</text>
+            <text x="1180" y="368" fill="var(--bad)">invalid &middot; error severity</text>
+            <text x="1420" y="516" fill="var(--ink-soft)">human release &middot; or auto-resolved on clean re-validate</text>
+            <text x="330" y="790" fill="var(--ai)">accepted proposal &rarr; new source row, competes as evidence</text>
+          </g>
+
+          <!-- ============ REVIEW CONSOLE ============ -->
+          <g>
+            <rect x="880" y="30" width="360" height="64" rx="4" fill="var(--surface-2)" stroke="var(--line-strong)" stroke-width="1.4"/>
+            <text x="1060" y="55" text-anchor="middle" font-size="14.5" font-weight="600" fill="var(--ink)">REVIEW CONSOLE</text>
+            <text x="1060" y="76" text-anchor="middle" class="mono" font-size="10.8" fill="var(--ink-faint)">same functions as every CLI &middot; decisions finish themselves</text>
+          </g>
+
+          <!-- ============ INPUT ============ -->
+          <g>
+            <rect x="20" y="228" width="180" height="104" rx="4" fill="var(--surface-2)" stroke="var(--line-strong)" stroke-width="1.4" stroke-dasharray="4 3"/>
+            <text x="110" y="266" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Watched feed</text>
+            <text x="110" y="284" text-anchor="middle" font-size="12" fill="var(--ink-soft)">or manual CLI</text>
+            <text x="110" y="308" text-anchor="middle" class="mono" font-size="10.5" fill="var(--ink-faint)">CSV / Excel</text>
+          </g>
+
+          <!-- ============ STAGE BOX TEMPLATE (repeated) ============ -->
+          <!-- Ingestion -->
+          <g>
+            <rect x="240" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="240" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="350" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Ingestion</text>
+            <text x="252" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="252" y="243" class="mono" font-size="11" fill="var(--ink-soft)">source, batch,</text>
+            <text x="252" y="257" class="mono" font-size="11" fill="var(--ink-soft)">raw_record</text>
+            <circle cx="404" cy="200" r="10" fill="var(--accent)"/>
+            <text x="404" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">1</text>
+            <circle cx="404" cy="300" r="10" fill="var(--accent)"/>
+            <text x="404" y="304" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">2</text>
+            <text x="252" y="300" font-size="10.5" fill="var(--ink-faint)">type inference: off</text>
+          </g>
+
+          <!-- Mapping -->
+          <g>
+            <rect x="500" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="500" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="610" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Mapping</text>
+            <text x="512" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="512" y="243" class="mono" font-size="11" fill="var(--ink-soft)">column_mapping</text>
+            <text x="512" y="257" font-size="10.3" fill="var(--ink-faint)">keyed to schema fingerprint</text>
+            <circle cx="664" cy="200" r="10" fill="var(--accent)"/>
+            <text x="664" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">3</text>
+            <text x="512" y="300" font-size="10.5" fill="var(--warn)">needs_review queue &uarr;</text>
+          </g>
+
+          <!-- Normalization -->
+          <g>
+            <rect x="760" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="760" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="870" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Normalization</text>
+            <text x="772" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="772" y="243" class="mono" font-size="11" fill="var(--ink-soft)">attribute_observation</text>
+            <text x="772" y="257" font-size="10.3" fill="var(--ink-faint)">1 row / column / row, unmapped too</text>
+            <circle cx="924" cy="200" r="10" fill="var(--accent)"/>
+            <text x="924" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">4</text>
+          </g>
+
+          <!-- Validation -->
+          <g>
+            <rect x="1020" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="1020" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="1130" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Validation</text>
+            <text x="1032" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="1032" y="243" class="mono" font-size="11" fill="var(--ink-soft)">validation_result,</text>
+            <text x="1032" y="257" class="mono" font-size="11" fill="var(--ink-soft)">record_validation</text>
+            <circle cx="1184" cy="200" r="10" fill="var(--accent)"/>
+            <text x="1184" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">5</text>
+            <text x="1032" y="300" font-size="10.5" fill="var(--ink-faint)">passes stored too, not just fails</text>
+          </g>
+
+          <!-- Quarantine gate diamond -->
+          <g>
+            <polygon points="1360,172 1436,250 1360,328 1284,250" fill="var(--bad-soft)" stroke="var(--bad)" stroke-width="1.8"/>
+            <text x="1360" y="246" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--bad)">error</text>
+            <text x="1360" y="260" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--bad)">severity?</text>
+            <circle cx="1360" cy="188" r="10" fill="var(--bad)"/>
+            <text x="1360" y="192" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">6</text>
+          </g>
+
+          <!-- Resolution -->
+          <g>
+            <rect x="1480" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="1480" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="1590" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Resolution</text>
+            <text x="1492" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="1492" y="243" class="mono" font-size="11" fill="var(--ink-soft)">entity, entity_identity_key,</text>
+            <text x="1492" y="257" class="mono" font-size="11" fill="var(--ink-soft)">record_entity_link</text>
+            <circle cx="1654" cy="200" r="10" fill="var(--accent)"/>
+            <text x="1654" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">7</text>
+            <circle cx="1654" cy="300" r="10" fill="var(--accent)"/>
+            <text x="1654" y="304" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">8</text>
+            <text x="1492" y="300" font-size="10.3" fill="var(--ink-faint)">match_candidate queue &uarr;</text>
+          </g>
+
+          <!-- Golden Build -->
+          <g>
+            <rect x="1740" y="180" width="220" height="140" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.8"/>
+            <rect x="1740" y="180" width="220" height="30" rx="4" fill="var(--accent-soft)"/>
+            <text x="1850" y="200" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Golden Build</text>
+            <text x="1752" y="228" class="mono" font-size="10.8" fill="var(--ink-faint)">writes</text>
+            <text x="1752" y="243" class="mono" font-size="11" fill="var(--ink-soft)">golden_attribute</text>
+            <text x="1752" y="257" font-size="10.3" fill="var(--ink-faint)">current + full history, one table</text>
+            <circle cx="1904" cy="200" r="10" fill="var(--accent)"/>
+            <text x="1904" y="204" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">9</text>
+          </g>
+
+          <!-- Provenance -->
+          <g>
+            <rect x="2000" y="180" width="180" height="140" rx="4" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.8" stroke-dasharray="4 3"/>
+            <rect x="2000" y="180" width="180" height="30" rx="4" fill="var(--surface-2)"/>
+            <text x="2090" y="200" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Provenance</text>
+            <text x="2012" y="228" class="mono" font-size="10.5" fill="var(--ink-faint)">reads</text>
+            <text x="2012" y="243" font-size="10.5" fill="var(--ink-soft)">explain_value()</text>
+            <text x="2012" y="258" font-size="10.2" fill="var(--ink-faint)">5 confidences, never summed</text>
+          </g>
+
+          <!-- ============ record_error ============ -->
+          <g>
+            <rect x="240" y="420" width="220" height="94" rx="4" fill="var(--surface-2)" stroke="var(--ink-faint)" stroke-width="1.4" stroke-dasharray="3 4"/>
+            <text x="350" y="443" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink-soft)">record_error</text>
+            <text x="350" y="461" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">our fault, not a data verdict</text>
+            <text x="350" y="478" text-anchor="middle" class="mono" font-size="10" fill="var(--ink-faint)">open &middot; reprocessed &middot; ignored</text>
+            <circle cx="440" cy="432" r="10" fill="var(--ink-faint)"/>
+            <text x="440" y="436" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--surface)">5</text>
+          </g>
+
+          <!-- ============ Quarantine lane ============ -->
+          <g>
+            <rect x="1020" y="440" width="280" height="170" rx="4" fill="var(--surface)" stroke="var(--bad)" stroke-width="1.8"/>
+            <rect x="1020" y="440" width="280" height="30" rx="4" fill="var(--bad-soft)"/>
+            <text x="1160" y="460" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--bad)">Quarantine</text>
+            <text x="1032" y="490" class="mono" font-size="10.5" fill="var(--ink-faint)">quarantine_item / quarantine_event</text>
+            <text x="1032" y="510" font-size="10.5" fill="var(--ink-soft)">held, not lost &mdash; never a copy</text>
+            <g class="mono" font-size="10">
+              <rect x="1032" y="520" width="52" height="18" rx="9" fill="var(--warn-soft)"/>
+              <text x="1058" y="533" text-anchor="middle" fill="var(--warn)">open</text>
+              <rect x="1090" y="520" width="70" height="18" rx="9" fill="var(--good-soft)"/>
+              <text x="1125" y="533" text-anchor="middle" fill="var(--good)">released</text>
+              <rect x="1166" y="520" width="66" height="18" rx="9" fill="var(--bad-soft)"/>
+              <text x="1199" y="533" text-anchor="middle" fill="var(--bad)">rejected</text>
+              <rect x="1238" y="520" width="66" height="18" rx="9" fill="var(--surface-2)"/>
+              <text x="1271" y="533" text-anchor="middle" fill="var(--ink-soft)">resolved</text>
+            </g>
+            <text x="1032" y="562" font-size="10.3" fill="var(--ink-faint)">gate enforced by resolvable_record VIEW</text>
+            <circle cx="1276" cy="452" r="10" fill="var(--bad)"/>
+            <text x="1276" y="456" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">6</text>
+          </g>
+
+          <!-- ============ Enrichment lane ============ -->
+          <g>
+            <rect x="760" y="620" width="200" height="110" rx="4" fill="var(--surface)" stroke="var(--ai)" stroke-width="1.6"/>
+            <rect x="760" y="620" width="200" height="28" rx="4" fill="var(--ai-soft)"/>
+            <text x="860" y="639" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ai)">Enrichment job</text>
+            <text x="772" y="665" font-size="10.3" fill="var(--ink-soft)">opt-in, human-gated</text>
+            <text x="772" y="681" class="mono" font-size="10" fill="var(--ink-faint)">AI_ENRICHMENT_RELIABILITY</text>
+            <text x="772" y="695" font-size="10" fill="var(--ink-faint)">default 0.20, below any vendor</text>
+          </g>
+          <g>
+            <rect x="1000" y="620" width="220" height="110" rx="4" fill="var(--surface)" stroke="var(--ai)" stroke-width="1.6"/>
+            <rect x="1000" y="620" width="220" height="28" rx="4" fill="var(--ai-soft)"/>
+            <text x="1110" y="639" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ai)">enrichment_attempt</text>
+            <text x="1012" y="663" font-size="10.3" fill="var(--ink-soft)">dedup / cost gate</text>
+            <text x="1012" y="679" class="mono" font-size="10" fill="var(--ink-faint)">UNIQUE(entity_id, field)</text>
+            <text x="1012" y="695" font-size="10" fill="var(--ink-faint)">asked at most once, ever</text>
+          </g>
+          <g>
+            <rect x="1260" y="620" width="220" height="110" rx="4" fill="var(--surface)" stroke="var(--ai)" stroke-width="1.6"/>
+            <rect x="1260" y="620" width="220" height="28" rx="4" fill="var(--ai-soft)"/>
+            <text x="1370" y="639" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ai)">enrichment_proposal</text>
+            <text x="1272" y="663" class="mono" font-size="10.5" fill="var(--ink-faint)">pending &middot; accepted &middot; rejected</text>
+            <text x="1272" y="681" font-size="10.3" fill="var(--ink-soft)">never writes golden_attribute</text>
+            <text x="1272" y="695" font-size="10.3" fill="var(--ink-soft)">directly &mdash; ever</text>
+            <circle cx="1444" cy="632" r="10" fill="var(--ai)"/>
+            <text x="1444" y="636" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">10</text>
+          </g>
+
+          <!-- edge case tags near 7/8 -->
+          <text x="1492" y="318" font-size="10" fill="var(--ink-faint)"></text>
+          <g transform="translate(1550,150)">
+            <circle cx="0" cy="0" r="10" fill="var(--accent)"/>
+            <text x="0" y="4" text-anchor="middle" font-size="10.5" font-weight="700" fill="#fff">9</text>
+          </g>
+
+        </svg>
+      </div>
+      <p class="sheet-caption">
+        <span>viewBox 2200 &times; 1000 &middot; scroll horizontally on narrow screens</span>
+        <span>10 numbered edge cases &darr; explained below</span>
+      </p>
+    </div>
+
+    <div class="ledger">
+      <div class="ledger-row">
+        <div class="ledger-num">1</div>
+        <div class="ledger-stage">Ingestion</div>
+        <div class="ledger-text"><b>Type inference is off, everywhere.</b> Every cell lands as a string, verbatim. A spreadsheet reader silently turning <code>"007"</code> into <code>7</code> would be unrecoverable data loss before anyone even decided what the column meant.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">2</div>
+        <div class="ledger-stage">Ingestion</div>
+        <div class="ledger-text"><b>Duplicate loads are blocked, races are not.</b> <code>payload_hash</code> stops the same file loading twice; a separate in-flight check (<code>find_in_flight_batch</code>) closes the race where two processes ingest the same file concurrently.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">3</div>
+        <div class="ledger-stage">Mapping</div>
+        <div class="ledger-text"><b>Value-based guesses can never auto-accept.</b> <code>value_analysis</code> is hard-capped at 0.75 confidence &mdash; values prove a type, not a field. And if two columns both look like the same field, <i>both</i> drop to <code>needs_review</code>; no silent winner gets picked.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">4</div>
+        <div class="ledger-stage">Normalization</div>
+        <div class="ledger-text"><b>Unmapped columns are captured too.</b> <code>attribute_observation</code> writes one row per source column per row &mdash; including columns nobody has reviewed yet &mdash; so nothing is lost while a mapping decision is still pending.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">5</div>
+        <div class="ledger-stage">Any stage</div>
+        <div class="ledger-text"><b>A bug and a bad value are not the same failure.</b> <code>record_error</code> catches malformed payloads and constraint violations &mdash; <i>our</i> fault, happening before a row can even become a proper record &mdash; kept structurally separate from quarantine, which is a verdict about the data itself.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">6</div>
+        <div class="ledger-stage">Quarantine</div>
+        <div class="ledger-text"><b>Only a record-scope error invalidates the whole record.</b> An earlier version let any single attribute error take the record down &mdash; one broken <code>Phone</code> column once wrongly quarantined 907 of 1000 otherwise-good rows. Fixed by scoping invalidation to record-level errors only.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">7</div>
+        <div class="ledger-stage">Resolution</div>
+        <div class="ledger-text"><b>Moderate evidence has a ceiling.</b> If the best-matched identity key is only <code>moderate</code> strength, confidence is hard-capped at 0.89 &mdash; no amount of corroboration crosses it into auto-link. A tie at &ge;0.90 between two candidates is forced to review instead of coin-flipped.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">8</div>
+        <div class="ledger-stage">Resolution</div>
+        <div class="ledger-text"><b><code>source.describes</code> changes what "same" means.</b> A vendor cataloguing locations, not organisations, gets its domain/email keys demoted to moderate &mdash; a shared parent domain across storefronts shouldn't auto-merge them. Before this existed, a merge tool almost collapsed 5,097 distinct retail locations into one entity.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">9</div>
+        <div class="ledger-stage">Golden Build</div>
+        <div class="ledger-text"><b>Losing values are never discarded.</b> Every alternative stays in <code>evidence.alternatives</code> with its source. Rebuilds are idempotent &mdash; an unchanged winner keeps its original <code>valid_from</code> even when the builder reruns.</div>
+      </div>
+      <div class="ledger-row">
+        <div class="ledger-num">10</div>
+        <div class="ledger-stage">Enrichment</div>
+        <div class="ledger-text"><b>AI may propose, never assert.</b> Nothing writes <code>golden_attribute</code> directly, ever &mdash; an accepted proposal becomes an ordinary <code>source</code> row and competes as evidence like any vendor. An early design that wrote straight through via a low-reliability synthetic source was rejected mid-build for breaking exactly this rule.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="mechanisms">
+    <div class="section-head">
+      <div class="section-num">02 / three mechanisms</div>
+      <h2>Where the decisions actually get made</h2>
+      <p class="section-desc">Three of the boxes above hide a real decision tree. Here's what's inside resolution's scoring, golden's survivorship rule, and the fork between "bad data" and "our bug."</p>
+    </div>
+
+    <div class="mini-grid">
+
+      <!-- Mini A: resolution scoring -->
+      <div class="mini-card">
+        <h3>Resolution &middot; candidate scoring</h3>
+        <p class="mini-sub">services/resolution/scoring.py</p>
+        <svg viewBox="0 0 620 460" role="img" aria-label="Resolution scoring: matched identity keys pick the highest-weighted key as a base score, add 0.04 confidence per additional distinct key type that also matches, then cap the score at 0.89 if the best key is only moderate strength. The final score decides auto-link at or above 0.90, review between 0.60 and 0.90, or a tied top score forced to review, otherwise a new entity below 0.60.">
+          <defs>
+            <marker id="ma-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1.8" marker-end="url(#ma-arrow)" opacity="0.85">
+            <line x1="310" y1="46" x2="310" y2="74"/>
+            <line x1="310" y1="118" x2="310" y2="146"/>
+            <line x1="310" y1="190" x2="310" y2="218"/>
+            <line x1="310" y1="262" x2="310" y2="290"/>
+          </g>
+          <g class="mono" font-size="11" text-anchor="middle" fill="currentColor">
+            <rect x="150" y="10" width="320" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="32">matched identity_key(s)</text>
+
+            <rect x="130" y="82" width="360" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="104">score = weight of best-matched key</text>
+
+            <rect x="110" y="154" width="400" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="176">+0.04 &times; extra distinct key types agreeing</text>
+
+            <polygon points="310,220 410,254 310,288 210,254" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="250" font-size="10.5">best key</text>
+            <text x="310" y="263" font-size="10.5">= moderate?</text>
+          </g>
+          <text x="440" y="248" font-size="10.5" fill="var(--ink-faint)" text-anchor="start">yes</text>
+          <path d="M410,254 L470,254 L470,300" fill="none" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#ma-arrow)" color="var(--warn)"/>
+          <rect x="386" y="300" width="168" height="30" rx="4" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.2"/>
+          <text x="470" y="320" text-anchor="middle" font-size="10.5" fill="var(--warn)" class="mono">cap at 0.89</text>
+
+          <text x="200" y="248" font-size="10.5" fill="var(--ink-faint)" text-anchor="end">no</text>
+          <path d="M210,254 L150,254 L150,300" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ma-arrow)"/>
+
+          <line x1="310" y1="330" x2="310" y2="352" stroke="currentColor" stroke-width="1.4" marker-end="url(#ma-arrow)"/>
+          <path d="M150,330 L150,345 L300,345 L300,352" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M470,330 L470,345 L320,345 L320,352" fill="none" stroke="currentColor" stroke-width="1.4"/>
+
+          <g class="mono" font-size="10.5" font-weight="600">
+            <rect x="20" y="360" width="132" height="60" rx="5" fill="var(--good-soft)"/>
+            <text x="86" y="380" text-anchor="middle" fill="var(--good)">&ge; 0.90</text>
+            <text x="86" y="396" text-anchor="middle" fill="var(--good)" font-weight="400" font-size="9.5">auto-link</text>
+            <text x="86" y="410" text-anchor="middle" fill="var(--good)" font-weight="400" font-size="9.5">no tie</text>
+
+            <rect x="164" y="360" width="132" height="60" rx="5" fill="var(--warn-soft)"/>
+            <text x="230" y="380" text-anchor="middle" fill="var(--warn)">tie &ge; 0.90</text>
+            <text x="230" y="396" text-anchor="middle" fill="var(--warn)" font-weight="400" font-size="9.5">forced to review,</text>
+            <text x="230" y="410" text-anchor="middle" fill="var(--warn)" font-weight="400" font-size="9.5">never coin-flipped</text>
+
+            <rect x="308" y="360" width="132" height="60" rx="5" fill="var(--warn-soft)"/>
+            <text x="374" y="380" text-anchor="middle" fill="var(--warn)">0.60&ndash;0.89</text>
+            <text x="374" y="396" text-anchor="middle" fill="var(--warn)" font-weight="400" font-size="9.5">match_candidate,</text>
+            <text x="374" y="410" text-anchor="middle" fill="var(--warn)" font-weight="400" font-size="9.5">record still gets an id</text>
+
+            <rect x="452" y="360" width="132" height="60" rx="5" fill="var(--surface-2)"/>
+            <text x="518" y="380" text-anchor="middle" fill="var(--ink-soft)">&lt; 0.60</text>
+            <text x="518" y="396" text-anchor="middle" fill="var(--ink-soft)" font-weight="400" font-size="9.5">new_entity,</text>
+            <text x="518" y="410" text-anchor="middle" fill="var(--ink-soft)" font-weight="400" font-size="9.5">no candidate filed</text>
+          </g>
+        </svg>
+      </div>
+
+      <!-- Mini B: golden survivorship -->
+      <div class="mini-card">
+        <h3>Golden &middot; survivorship rule</h3>
+        <p class="mini-sub">services/golden/strategies.py</p>
+        <svg viewBox="0 0 620 460" role="img" aria-label="Golden record survivorship: each canonical field is assigned one of four strategies. Most recent wins for fields like address and job title. Most frequent, counted by distinct source not by row, wins for identity facts like name. Earliest wins only for founded year. Most reliable source is the default for identifiers. All four feed one confidence formula and keep every losing value as evidence.">
+          <g class="mono" font-size="10.8" text-anchor="middle">
+            <rect x="220" y="8" width="180" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="29" fill="currentColor">canonical_field</text>
+          </g>
+          <g fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.8">
+            <path d="M310,42 L310,58 L80,58 L80,76"/>
+            <path d="M310,42 L310,58 L250,58 L250,76"/>
+            <path d="M310,42 L310,58 L380,58 L380,76"/>
+            <path d="M310,42 L310,58 L520,58 L520,76"/>
+          </g>
+          <g class="mono" font-size="9.6">
+            <rect x="10" y="76" width="140" height="66" rx="5" fill="var(--accent-soft)"/>
+            <text x="80" y="94" text-anchor="middle" font-weight="700" fill="var(--accent)">most_recent</text>
+            <text x="80" y="110" text-anchor="middle" fill="var(--ink-soft)">address, job_title,</text>
+            <text x="80" y="123" text-anchor="middle" fill="var(--ink-soft)">revenue, funding&hellip;</text>
+
+            <rect x="180" y="76" width="140" height="66" rx="5" fill="var(--accent-soft)"/>
+            <text x="250" y="94" text-anchor="middle" font-weight="700" fill="var(--accent)">most_frequent</text>
+            <text x="250" y="110" text-anchor="middle" fill="var(--ink-soft)">name, legal_name</text>
+            <text x="250" y="123" text-anchor="middle" fill="var(--ink-soft)">counts sources, not rows</text>
+
+            <rect x="310" y="76" width="140" height="66" rx="5" fill="var(--accent-soft)"/>
+            <text x="380" y="94" text-anchor="middle" font-weight="700" fill="var(--accent)">earliest</text>
+            <text x="380" y="110" text-anchor="middle" fill="var(--ink-soft)">founded_year</text>
+            <text x="380" y="123" text-anchor="middle" fill="var(--ink-soft)">immutable fact</text>
+
+            <rect x="450" y="76" width="160" height="66" rx="5" fill="var(--accent-soft)"/>
+            <text x="530" y="94" text-anchor="middle" font-weight="700" fill="var(--accent)">most_reliable_source</text>
+            <text x="530" y="110" text-anchor="middle" fill="var(--ink-soft)">default &middot; identifiers,</text>
+            <text x="530" y="123" text-anchor="middle" fill="var(--ink-soft)">email</text>
+          </g>
+          <g fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.8">
+            <path d="M80,142 L80,160 L310,160 L310,178"/>
+            <path d="M250,142 L250,160 L310,178"/>
+            <path d="M380,142 L380,160 L310,178"/>
+            <path d="M530,142 L530,160 L310,160 L310,178"/>
+          </g>
+          <g class="mono" text-anchor="middle">
+            <rect x="90" y="178" width="440" height="70" rx="5" fill="var(--surface-2)" stroke="currentColor" stroke-width="1.2"/>
+            <text x="310" y="200" font-size="10.5" font-weight="600" fill="currentColor">confidence = reliability</text>
+            <text x="310" y="216" font-size="10.5" fill="currentColor">+ 0.15 &times; (supporting sources &minus; 1)</text>
+            <text x="310" y="232" font-size="10.5" fill="currentColor">&minus; 0.10 &times; dissenting sources &middot; clamped [0.05, 0.99]</text>
+          </g>
+          <line x1="310" y1="248" x2="310" y2="270" stroke="currentColor" stroke-width="1.4" marker-end="url(#ma-arrow)"/>
+          <rect x="130" y="270" width="360" height="60" rx="5" fill="var(--good-soft)"/>
+          <text x="310" y="294" text-anchor="middle" font-size="11" font-weight="600" fill="var(--good)" class="mono">golden_attribute (current)</text>
+          <text x="310" y="312" text-anchor="middle" font-size="10" fill="var(--good)" class="mono">every loser kept in evidence.alternatives</text>
+
+          <text x="310" y="360" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">dissenting_sources counts distinct vendors,</text>
+          <text x="310" y="376" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">not distinct rows &mdash; one chatty source isn't many votes</text>
+        </svg>
+      </div>
+
+      <!-- Mini C: record_error vs quarantine -->
+      <div class="mini-card">
+        <h3>The fork: our bug vs. their bad data</h3>
+        <p class="mini-sub">any stage &middot; validation / ingestion</p>
+        <svg viewBox="0 0 620 460" role="img" aria-label="A record entering any stage forks two ways. A malformed payload or constraint violation, which is a fault of the system, routes to record_error with statuses open, reprocessed, or ignored. A record that fails validation, a verdict about the data itself, routes to quarantine_item with statuses open, released, rejected, or resolved, and a human release sends it back into the pipeline. These two paths never overlap.">
+          <g class="mono" text-anchor="middle">
+            <rect x="220" y="10" width="180" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <text x="310" y="31" font-size="10.8" fill="currentColor">row enters a stage</text>
+          </g>
+          <path d="M310,44 L310,60 L150,60 L150,78" fill="none" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#ma-arrow)" color="var(--ink-faint)"/>
+          <path d="M310,44 L310,60 L470,60 L470,78" fill="none" stroke="var(--bad)" stroke-width="1.5" marker-end="url(#ma-arrow)" color="var(--bad)"/>
+
+          <g class="mono">
+            <rect x="40" y="78" width="220" height="50" rx="5" fill="var(--surface-2)"/>
+            <text x="150" y="98" text-anchor="middle" font-size="10.2" fill="var(--ink-soft)">malformed payload / bug /</text>
+            <text x="150" y="113" text-anchor="middle" font-size="10.2" fill="var(--ink-soft)">constraint violation &mdash; our fault</text>
+
+            <rect x="360" y="78" width="220" height="50" rx="5" fill="var(--bad-soft)"/>
+            <text x="470" y="98" text-anchor="middle" font-size="10.2" fill="var(--bad)">fails validation &mdash; a verdict</text>
+            <text x="470" y="113" text-anchor="middle" font-size="10.2" fill="var(--bad)">about the data itself</text>
+          </g>
+
+          <line x1="150" y1="128" x2="150" y2="150" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#ma-arrow)" color="var(--ink-faint)"/>
+          <line x1="470" y1="128" x2="470" y2="150" stroke="var(--bad)" stroke-width="1.5" marker-end="url(#ma-arrow)" color="var(--bad)"/>
+
+          <g class="mono">
+            <rect x="40" y="150" width="220" height="86" rx="5" fill="var(--surface)" stroke="var(--ink-faint)" stroke-width="1.4"/>
+            <text x="150" y="172" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink-soft)">record_error</text>
+            <text x="150" y="192" text-anchor="middle" font-size="9.6" fill="var(--ink-faint)">open</text>
+            <text x="150" y="206" text-anchor="middle" font-size="9.6" fill="var(--ink-faint)">reprocessed</text>
+            <text x="150" y="220" text-anchor="middle" font-size="9.6" fill="var(--ink-faint)">ignored</text>
+
+            <rect x="360" y="150" width="220" height="86" rx="5" fill="var(--surface)" stroke="var(--bad)" stroke-width="1.4"/>
+            <text x="470" y="172" text-anchor="middle" font-size="11" font-weight="700" fill="var(--bad)">quarantine_item</text>
+            <text x="470" y="192" text-anchor="middle" font-size="9.6" fill="var(--bad)">open &middot; released</text>
+            <text x="470" y="206" text-anchor="middle" font-size="9.6" fill="var(--bad)">rejected &middot; resolved</text>
+          </g>
+
+          <path d="M580,193 L604,193 L604,340 L470,340 L470,240" fill="none" stroke="var(--good)" stroke-width="1.6" marker-end="url(#ma-arrow)" color="var(--good)"/>
+          <text x="530" y="330" font-size="10" fill="var(--good)" class="mono" text-anchor="middle">human release</text>
+          <text x="530" y="344" font-size="10" fill="var(--good)" class="mono" text-anchor="middle">re-enters pipeline</text>
+
+          <text x="310" y="400" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">these two paths never overlap &mdash;</text>
+          <text x="310" y="416" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">a bug is never a data verdict, a bad value is never a system fault</text>
+        </svg>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="reference">
+    <div class="section-head">
+      <div class="section-num">03 / thresholds &amp; enums</div>
+      <h2>The numbers behind the boxes</h2>
+      <p class="section-desc">Every status enum and every threshold that appears above, in one place.</p>
+    </div>
+
+    <div class="ref-grid">
+      <div class="card">
+        <div class="card-head">Status enums by stage <span>current values, not aspirational</span></div>
+        <table>
+          <thead><tr><th>table.column</th><th>values</th></tr></thead>
+          <tbody>
+            <tr><td>batch.status</td><td>running &middot; completed &middot; failed</td></tr>
+            <tr><td>column_mapping.mapping_status</td><td><span class="chip good">auto_accepted</span> <span class="chip warn">needs_review</span> unmapped &middot; approved &middot; rejected</td></tr>
+            <tr><td>column_mapping.mapping_method</td><td>exact_alias &middot; similarity &middot; value_analysis &middot; corroborated &middot; <span class="chip ai">ai_suggestion</span> &middot; manual</td></tr>
+            <tr><td>record_validation.status</td><td><span class="chip good">valid</span> <span class="chip warn">warning</span> <span class="chip bad">invalid</span></td></tr>
+            <tr><td>validation_result.outcome</td><td>pass &middot; fail &nbsp;(passes stored too)</td></tr>
+            <tr><td>quarantine_item.status</td><td><span class="chip warn">open</span> <span class="chip good">released</span> <span class="chip bad">rejected</span> resolved</td></tr>
+            <tr><td>match_candidate.status</td><td><span class="chip warn">open</span> accepted &middot; rejected</td></tr>
+            <tr><td>record_entity_link.match_status</td><td>auto_linked &middot; new_entity &middot; manual</td></tr>
+            <tr><td>golden_attribute.strategy</td><td>most_reliable_source &middot; most_recent &middot; most_frequent &middot; earliest</td></tr>
+            <tr><td>record_error.status</td><td>open &middot; reprocessed &middot; ignored</td></tr>
+            <tr><td>enrichment_attempt.outcome</td><td>written &middot; declined &middot; error</td></tr>
+            <tr><td>enrichment_proposal.status</td><td><span class="chip ai">pending</span> accepted &middot; rejected</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Thresholds that gate a decision <span>hard-coded, deliberately</span></div>
+        <table>
+          <thead><tr><th>where</th><th>rule</th></tr></thead>
+          <tbody>
+            <tr><td>mapping</td><td>&ge;0.90 auto-accept &middot; 0.60&ndash;0.90 needs_review &middot; &lt;0.60 unmapped</td></tr>
+            <tr><td>mapping</td><td>value_analysis / ai_suggestion capped at 0.75, can never auto-accept alone</td></tr>
+            <tr><td>resolution</td><td>&ge;0.90 auto-link &middot; 0.60&ndash;0.90 review &middot; &lt;0.60 new entity</td></tr>
+            <tr><td>resolution</td><td>moderate-strength key capped at 0.89, regardless of corroboration</td></tr>
+            <tr><td>resolution</td><td>+0.04 confidence per additional distinct key type (not per value)</td></tr>
+            <tr><td>golden</td><td>confidence = reliability + 0.15&times;(support&minus;1) &minus; 0.10&times;dissent, clamped [0.05, 0.99]</td></tr>
+            <tr><td>enrichment</td><td>AI_ENRICHMENT_RELIABILITY defaults to 0.20 &mdash; below any real vendor's default 0.50</td></tr>
+            <tr><td>enrichment</td><td>ELIGIBLE_FIELDS is a small explicit allowlist (e.g. industry, department) after live tests showed hallucinated answers on open fields</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>PCDF &middot; People &amp; Company Data Foundation &middot; system schematic</span>
+    <span>sourced from db/migrations 0001&ndash;0021, docs/decisions 0001&ndash;0017, docs/guides, and service CLIs</span>
+  </footer>
+
+</div>

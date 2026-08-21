@@ -95,6 +95,41 @@ def has_role_email(conn: psycopg.Connection, record_id: str) -> bool:
         return cur.fetchone() is not None
 
 
+def lock_keys(
+    conn: psycopg.Connection, entity_type: str, keys: list
+) -> None:
+    """Serialize any two transactions that could create or claim the same
+    identity key.
+
+    `find_candidates` reads, the caller decides, `create_entity`/`add_keys`
+    writes -- three separate statements with no lock across them. Two
+    transactions resolving different records that happen to share an
+    identifying key (an email, a domain) can both read "no entity yet", both
+    decide DECISION_NEW, and both create one: `entity_identity_key`'s unique
+    constraint is scoped per-entity, so nothing stops the same key value from
+    being claimed twice under two different entity ids. This was reachable
+    even before manual stage runs existed -- `process run` and `process
+    watch` are two OS processes -- but a one-click "run resolution now" button
+    makes it easy to trigger by accident against data the watcher is also
+    touching.
+
+    A transaction-scoped advisory lock closes the window: the second
+    transaction blocks here until the first commits, and then its own
+    `find_candidates` sees the entity and key the first one just wrote, so it
+    links instead of duplicating. Released automatically at commit or
+    rollback, which already happens once per record in every caller.
+    """
+    if not keys:
+        return
+    ordered = sorted({(k.key_type, k.key_value) for k in keys})
+    with conn.cursor() as cur:
+        for key_type, key_value in ordered:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"{entity_type}:{key_type}:{key_value}",),
+            )
+
+
 def find_candidates(
     conn: psycopg.Connection, entity_type: str, keys: list[tuple[str, str]]
 ) -> list[dict[str, Any]]:
@@ -333,15 +368,32 @@ def resolve_entity_id(conn: psycopg.Connection, entity_id: str) -> str | None:
     raise RuntimeError(f"merge chain from {entity_id} did not terminate")
 
 
-def get_candidate(conn: psycopg.Connection, candidate_id: str) -> dict[str, Any] | None:
+def get_candidate(
+    conn: psycopg.Connection, candidate_id: str, for_update: bool = False
+) -> dict[str, Any] | None:
+    """One candidate, optionally locked for the duration of a decision.
+
+    `for_update` is what stops the same candidate being decided twice at once.
+    Accepting reads the status, checks it is 'open', merges, then closes it --
+    four statements. Two reviewers hitting accept together (or one browser
+    double-posting) both read 'open' before either closes it, and both go on to
+    merge. `resolve_entity_id` only rescues that once the first has committed,
+    which in a real race it has not.
+
+    Locked, the second transaction blocks until the first commits and then sees
+    'accepted', so it is refused instead of merging a second time. The lock is
+    `OF c` because the left-joined link is not what is being decided, and
+    Postgres will not lock the nullable side of an outer join anyway.
+    """
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            """
+            f"""
             SELECT c.*, l.entity_id AS record_entity_id
             FROM match_candidate c
             LEFT JOIN record_entity_link l
               ON l.record_id = c.record_id AND l.role = 'self'
             WHERE c.candidate_id = %s
+            {"FOR UPDATE OF c" if for_update else ""}
             """,
             (candidate_id,),
         )

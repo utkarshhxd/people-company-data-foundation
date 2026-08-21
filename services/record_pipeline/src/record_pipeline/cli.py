@@ -1,10 +1,10 @@
 import argparse
-import logging
 import sys
 import time
 from pathlib import Path
 
 from common.db import connect
+from common.logging import configure
 from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
@@ -54,10 +54,6 @@ def build_parser() -> argparse.ArgumentParser:
             "record is not fully current when it finishes, so downstream must "
             "wait for a separate golden build."
         ),
-    )
-    run.add_argument(
-        "--no-publish", action="store_true",
-        help="process without emitting a record.processed event per record",
     )
     run.add_argument(
         "--fail-fast", action="store_true",
@@ -153,7 +149,6 @@ def _run(args) -> int:
             allow_reingest=args.allow_reingest,
             read_ahead=args.read_ahead,
             build_golden=not args.no_golden,
-            publish=not args.no_publish,
             fail_fast=args.fail_fast,
             async_commit=args.async_commit,
             describes=args.describes,
@@ -293,7 +288,7 @@ def _reprocess(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("record_pipeline")
     if args.command == "run":
         return _run(args)
     if args.command == "watch":

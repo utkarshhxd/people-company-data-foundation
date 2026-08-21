@@ -1,6 +1,5 @@
 import hashlib
 import json
-from collections.abc import Iterator
 from typing import Any
 
 import psycopg
@@ -216,31 +215,6 @@ def fail_batch(conn: psycopg.Connection, batch_id: str, error_message: str) -> N
             (error_message[:2000], batch_id),
         )
     conn.commit()
-
-
-def mark_events_published(conn: psycopg.Connection, batch_id: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE batch SET events_published_at = now() WHERE batch_id = %s", (batch_id,)
-        )
-    conn.commit()
-
-
-def iter_committed_records(
-    conn: psycopg.Connection, batch_id: str
-) -> Iterator[tuple[str, Any]]:
-    """Stream committed records so publishing can never reference an uncommitted row."""
-    with conn.cursor(name=f"pub_{batch_id.replace('-', '')}") as cur:
-        cur.itersize = INSERT_CHUNK_SIZE
-        cur.execute(
-            """
-            SELECT record_id, ingested_at FROM raw_record
-            WHERE batch_id = %s ORDER BY row_number
-            """,
-            (batch_id,),
-        )
-        for record_id, ingested_at in cur:
-            yield str(record_id), ingested_at
 
 
 def set_batch_columns(

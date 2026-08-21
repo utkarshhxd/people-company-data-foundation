@@ -1,0 +1,17 @@
+# Everything a stage service needs that is not a credential. The credentials
+# themselves are never here -- see 02-secret.example.yaml -- so this file is
+# safe to commit and safe to diff.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pcdf-config
+  namespace: pcdf
+data:
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  # Matches .env.example's POSTGRES_USER; change both here and in the Secret's
+  # username (if you switch off the default) together, same as Compose.
+  POSTGRES_USER: pcdf_dev
+  POSTGRES_DB: pcdf
+  LOG_LEVEL: info
+  PCDF_WATCH_DIR: /data/inbox/watch

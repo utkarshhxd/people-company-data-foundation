@@ -1,6 +1,0 @@
-full_name,e_mail,mobile_no,postal_code,customer_ref,joined,notes,notes
-  JOHN  SMITH  ,  JOHN@GMAIL.COM ,+91 (98765)-43210,00501,12345678901234567890,01/02/2026,first,second
-José Ünicode,jose@example.co.uk,+44 20 7946 0958,SW1A 1AA,000123,2026-01-02,café,naïve
-
-Jane Doe,JANE.DOE+tag@Example.COM,(555) 010-9999,90210,0000000001,02/29/2026,"quoted, comma",
-O'Brien-Smith,,+1-800-555-0100,K1A 0B1,9.99E10,,,trailing

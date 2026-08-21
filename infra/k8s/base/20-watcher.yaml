@@ -1,0 +1,48 @@
+# The only long-running thing in the record-at-a-time path: runs
+# record_pipeline's `process watch`. Kept at a single replica on purpose: two
+# watchers polling the same feed directory
+# would both see a settled file and could both start loading it. The
+# size/mtime-unchanged check in services/record_pipeline/src/record_pipeline/watch.py
+# guards against a file still being copied, not against two watchers.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watcher
+  namespace: pcdf
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: watcher
+  template:
+    metadata:
+      labels:
+        app: watcher
+    spec:
+      containers:
+        - name: watcher
+          image: pcdf-watcher:local
+          command: ["uv", "run", "--frozen", "--no-sync", "process", "watch", "--poll", "10"]
+          envFrom:
+            - configMapRef:
+                name: pcdf-config
+          # No POSTGRES_PASSWORD env var here: common.config.resolve() finds
+          # the mounted secret at /run/secrets/postgres_password on its own.
+          volumeMounts:
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: secrets
+          secret:
+            secretName: pcdf-secrets
+            items:
+              - key: postgres_password
+                path: postgres_password
+        - name: data
+          persistentVolumeClaim:
+            claimName: pcdf-data

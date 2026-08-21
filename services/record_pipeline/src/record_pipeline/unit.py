@@ -52,7 +52,7 @@ _RESULT_OUTCOME = 7
 
 @dataclass
 class RecordOutcome:
-    """What became of one record. This is also what gets published."""
+    """What became of one record."""
     record_id: str
     row_number: int
     source_record_id: str

@@ -1,5 +1,7 @@
 import pytest
 from mapping.engine import (
+    AI_SUGGESTION_CAP,
+    AUTO_ACCEPT_THRESHOLD,
     STATUS_AUTO_ACCEPTED,
     STATUS_NEEDS_REVIEW,
     STATUS_UNMAPPED,
@@ -78,6 +80,59 @@ def test_no_collision_when_fields_differ():
     mappings = map_columns(["e_mail", "mobile_no"], "person", {})
     assert all("collision" not in m.evidence for m in mappings)
     assert all(m.status == STATUS_AUTO_ACCEPTED for m in mappings)
+
+
+def test_ai_suggestion_disabled_by_default():
+    """Without ai_mapping_enabled, an unrecognised column stays unmapped --
+    no model call is attempted at all."""
+    mapping = map_column("internal_widget_code", "person", ["xyz", "abc"])
+    assert mapping.status == STATUS_UNMAPPED
+    assert mapping.method != "ai_suggestion"
+
+
+def test_ai_suggestion_fills_a_gap_but_never_auto_accepts(monkeypatch):
+    monkeypatch.setattr("mapping.engine.settings.ai_mapping_enabled", True)
+    monkeypatch.setattr(
+        "mapping.engine.generate_json",
+        lambda prompt, system=None: {"field": "job_title", "confidence": 0.95, "reason": "x"},
+    )
+    mapping = map_column("what_they_do", "person", [])
+    assert mapping.canonical_field == "job_title"
+    assert mapping.method == "ai_suggestion"
+    assert mapping.confidence <= AI_SUGGESTION_CAP
+    assert mapping.confidence < AUTO_ACCEPT_THRESHOLD
+    assert mapping.status == STATUS_NEEDS_REVIEW
+
+
+def test_ai_suggestion_never_overrides_a_deterministic_match(monkeypatch):
+    """A well-mapped column must not even ask the model."""
+    called = []
+    monkeypatch.setattr("mapping.engine.settings.ai_mapping_enabled", True)
+    monkeypatch.setattr(
+        "mapping.engine.generate_json",
+        lambda prompt, system=None: called.append(1) or {"field": "phone", "confidence": 0.9},
+    )
+    mapping = map_column("e_mail", "person", [])
+    assert mapping.method == "exact_alias"
+    assert not called
+
+
+def test_ai_suggestion_low_stated_confidence_is_dropped(monkeypatch):
+    monkeypatch.setattr("mapping.engine.settings.ai_mapping_enabled", True)
+    monkeypatch.setattr(
+        "mapping.engine.generate_json",
+        lambda prompt, system=None: {"field": "job_title", "confidence": 0.1},
+    )
+    mapping = map_column("internal_widget_code", "person", [])
+    assert mapping.method != "ai_suggestion"
+    assert mapping.status == STATUS_UNMAPPED
+
+
+def test_ai_suggestion_unreachable_model_falls_back(monkeypatch):
+    monkeypatch.setattr("mapping.engine.settings.ai_mapping_enabled", True)
+    monkeypatch.setattr("mapping.engine.generate_json", lambda prompt, system=None: None)
+    mapping = map_column("internal_widget_code", "person", [])
+    assert mapping.status == STATUS_UNMAPPED
 
 
 def test_ambiguous_alias_beats_similarity_noise_but_still_needs_review():

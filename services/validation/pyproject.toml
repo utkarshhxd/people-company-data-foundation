@@ -4,14 +4,12 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "psycopg[binary]>=3.2",
-    "confluent-kafka>=2.6",
     "common",
 ]
 
 [project.scripts]
 validate = "validation.cli:main"
 quarantine = "validation.quarantine_cli:main"
-validation-consumer = "validation.consumer:run"
 
 [dependency-groups]
 dev = [

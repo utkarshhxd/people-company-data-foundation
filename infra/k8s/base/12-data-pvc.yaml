@@ -1,0 +1,16 @@
+# Compose bind-mounts ./data from the host, which every service can do
+# because every service runs on the one host. Once pods can be scheduled onto
+# any node, that stops being true, so this becomes a real volume. ReadWriteOnce
+# is enough: only the watcher writes, and it runs as a single replica by
+# design (see 20-watcher.yaml) precisely so two pods never race to claim the
+# same dropped file.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pcdf-data
+  namespace: pcdf
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi

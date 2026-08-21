@@ -5,22 +5,27 @@ mapping can be explained afterwards: what matched, how well, and what was
 rejected.
 """
 
+import logging
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
+from common.ai_client import generate_json
 from common.canonical import (
     CANONICAL_SCHEMA_VERSION,
     SELF,
     fields_for,
     normalize_column_name,
 )
+from common.config import settings
 
 from mapping.detectors import (
     DETECTOR_SPECIFICITY,
     DISCRIMINATING_DETECTORS,
     match_ratio,
 )
+
+logger = logging.getLogger(__name__)
 
 AUTO_ACCEPT_THRESHOLD = 0.90
 REVIEW_THRESHOLD = 0.60
@@ -30,6 +35,12 @@ VALUE_ANALYSIS_CAP = 0.75
 VALUE_ANALYSIS_MIN_RATIO = 0.60
 CORROBORATION_BOOST = 0.15
 MAX_ALTERNATIVES = 3
+# Same cap and same reasoning as value analysis: a model naming a field is a
+# proposal, never a confirmation, so it can never on its own reach auto-accept.
+AI_SUGGESTION_CAP = 0.75
+# Below this stated confidence, the model's own uncertainty says the guess
+# isn't worth putting in front of a reviewer at all.
+AI_SUGGESTION_MIN_CONFIDENCE = 0.50
 # Above fuzzy-similarity noise (a curated alias is better evidence than a
 # difflib ratio) but below AUTO_ACCEPT_THRESHOLD, because an ambiguous alias
 # must always reach a human. _status_for is not trusted to keep that promise on
@@ -138,6 +149,59 @@ def _value_candidates(values: list[str], entity_type: str) -> list[Candidate]:
     return out
 
 
+def _ai_candidates(source_column: str, entity_type: str, values: list[str]) -> list[Candidate]:
+    """Ask the local model for a field guess, for a column the deterministic
+    rules alone left below auto-accept.
+
+    Only ever called there -- see the guard in `map_column` -- so a well-mapped
+    file never pays for a model call, and the AI's role stays exactly what the
+    rest of this module already enforces for every other soft signal: propose,
+    never confirm. The proposal is capped below AUTO_ACCEPT_THRESHOLD and always
+    lands in needs_review, same queue a human already works.
+    """
+    specs = fields_for(entity_type)
+    catalogue = "\n".join(f"- {spec.name} ({spec.subject}): {spec.description}"
+                          for spec in specs)
+    sample = ", ".join(repr(v) for v in values[:8] if v)
+    prompt = (
+        f"Source column name: {source_column!r}\n"
+        f"Sample values: {sample or '(none)'}\n\n"
+        f"Canonical fields for entity type {entity_type!r}:\n{catalogue}\n\n"
+        'Which canonical field does this column most likely represent? Reply '
+        'with JSON: {"field": <name or null>, "confidence": <0-1>, "reason": '
+        '<short string>}. Use null if none of the fields fit.'
+    )
+    result = generate_json(
+        prompt,
+        system="You map messy CRM/vendor column names onto a fixed schema. "
+               "You are cautious: you only name a field when reasonably sure, "
+               "and answer null otherwise.",
+    )
+    if not result or not result.get("field"):
+        return []
+
+    spec = next((s for s in specs if s.name == result["field"]), None)
+    if spec is None:
+        return []
+
+    try:
+        stated = float(result.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        return []
+    if stated < AI_SUGGESTION_MIN_CONFIDENCE:
+        return []
+
+    confidence = round(min(AI_SUGGESTION_CAP, max(0.0, stated)), 3)
+    return [
+        Candidate(
+            spec.name, "ai_suggestion", confidence,
+            {"model": settings.ollama_model, "stated_confidence": stated,
+             "reason": result.get("reason", "")},
+            spec.subject,
+        )
+    ]
+
+
 def _status_for(confidence: float) -> str:
     if confidence >= AUTO_ACCEPT_THRESHOLD:
         return STATUS_AUTO_ACCEPTED
@@ -201,6 +265,14 @@ def map_column(source_column: str, entity_type: str, values: list[str]) -> Mappi
                 )
             )
 
+    # The model is only ever asked about a column the deterministic rules
+    # couldn't already place with confidence -- an exact alias needs no second
+    # opinion, and asking for one on every column would turn one model call per
+    # unique layout into one per column of it, for no gain.
+    deterministic_best = max((c.confidence for c in candidates), default=0.0)
+    if settings.ai_mapping_enabled and deterministic_best < AUTO_ACCEPT_THRESHOLD:
+        candidates.extend(_ai_candidates(source_column, entity_type, values))
+
     if not candidates:
         return Mapping(
             source_column, None, "none", 0.0, STATUS_UNMAPPED,
@@ -241,6 +313,7 @@ _METHOD_RANK = {
     "ambiguous_alias": 1,
     "similarity": 1,
     "value_analysis": 0,
+    "ai_suggestion": 0,
 }
 
 

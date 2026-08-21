@@ -13,7 +13,8 @@ from pathlib import Path
 
 import psycopg
 
-from common.db import connect
+from common.db import NO_STATEMENT_TIMEOUT, connect
+from common.logging import configure
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,13 @@ def _apply(conn: psycopg.Connection, version: str, path: Path, sql: str) -> None
 def migrate(migrations_dir: Path = MIGRATIONS_DIR) -> int:
     migrations = discover(migrations_dir)
 
-    with connect() as conn:
+    # No statement timeout: a migration is allowed to take as long as it takes.
+    # Building an index over a table with millions of rows is a legitimate
+    # multi-minute statement, and one killed halfway leaves the schema in a
+    # state the runner did not record and cannot resume from.
+    with connect(
+        statement_timeout_ms=NO_STATEMENT_TIMEOUT, application_name="pcdf-migrate"
+    ) as conn:
         with conn.cursor() as cur:
             cur.execute(TRACKING_TABLE_DDL)
         conn.commit()
@@ -137,7 +144,7 @@ def migrate(migrations_dir: Path = MIGRATIONS_DIR) -> int:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("migrations")
     try:
         count = migrate()
     except (ValueError, RuntimeError, psycopg.Error) as exc:

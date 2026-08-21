@@ -6,12 +6,27 @@ networks:
 
 volumes:
   postgres-data:
-  kafka-data:
-  prometheus-data:
-  alertmanager-data:
-  grafana-data:
+  ollama-models:
 
 services:
+  # Local model for the two AI-assisted paths (schema mapping's needs_review
+  # fallback, and the enrichment batch job). Not started by `docker compose up`
+  # -- it has its own profile so it only runs for the window it's actually
+  # needed, which is the whole point of the batch approach: bring it up,
+  # `docker compose run --rm enrichment enrich run ...`, then
+  # `docker compose stop ollama` rather than paying for an idle model the rest
+  # of the day.
+  #   docker compose --profile ai up -d ollama
+  #   docker compose exec ollama ollama pull ${OLLAMA_MODEL:-gemma3:4b}
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    networks: [local-net]
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
   postgres:
     image: postgres:18.4-alpine
     restart: unless-stopped
@@ -29,114 +44,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 10s
-
-  kafka-data-init:
-    image: busybox:1.36
-    networks: [local-net]
-    command: ["chown", "-R", "1000:1000", "/data"]
-    volumes:
-      - kafka-data:/data
-
-  kafka:
-    image: apache/kafka:4.3.1
-    restart: unless-stopped
-    networks: [local-net]
-    depends_on:
-      kafka-data-init:
-        condition: service_completed_successfully
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-29092}
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-    ports:
-      - "${KAFKA_PORT:-29092}:29092"
-    volumes:
-      - kafka-data:/tmp/kraft-combined-logs
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-
-  prometheus:
-    image: prom/prometheus:v3.13.2
-    restart: unless-stopped
-    networks: [local-net]
-    volumes:
-      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus-data:/prometheus
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # Where a firing alert goes. Self-contained: alerts collect in its own UI and
-  # nothing leaves the machine until a webhook is configured, because a
-  # destination is something somebody has to own.
-  alertmanager:
-    image: prom/alertmanager:v0.28.1
-    restart: unless-stopped
-    networks: [local-net]
-    # Alertmanager does not expand environment variables in its own config, so
-    # the config is a template and this renders it at start. It also decides
-    # whether anything is routed anywhere at all -- see the script.
-    entrypoint: ["/etc/alertmanager/entrypoint.sh"]
-    environment:
-      # Unset by default and that is the point: with no destination configured,
-      # alerts collect in the UI at :9093 and nothing leaves this machine.
-      # Set it in .env to deliver. Slack, Teams and Discord all take a URL of
-      # this shape; the value is a credential and never enters the config file.
-      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
-    volumes:
-      - ./infra/alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
-      - ./infra/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
-      - alertmanager-data:/alertmanager
-    ports:
-      - "${ALERTMANAGER_PORT:-9093}:9093"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:9093/-/healthy || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  grafana:
-    image: grafana/grafana:13.1.1
-    restart: unless-stopped
-    networks: [local-net]
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
       start_period: 10s
 
   migrate:
@@ -174,7 +81,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./data:/data
@@ -183,8 +89,6 @@ services:
       - ./tools:/tools:ro
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["ingest", "--help"]
@@ -205,15 +109,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
     volumes:
       - ./data:/data
       - ./tools:/tools:ro
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["process", "--help"]
@@ -236,30 +140,48 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
       PCDF_WATCH_DIR: /data/inbox/watch
+      PCDF_WATCH_HEARTBEAT: /tmp/pcdf-watcher-heartbeat
+      PCDF_WATCH_STALE_AFTER: ${PCDF_WATCH_STALE_AFTER:-1800}
     volumes:
       # Writable, unlike the other bind mounts here: the watcher moves each
       # file into _done/ or _failed/ once it has handled it.
       - ./data:/data
+    # The watcher has no port to probe, and a process that is running is not
+    # the same as a process that is sweeping: one wedged mid-file keeps the
+    # container "up" while no file has been loaded in hours. It touches the
+    # heartbeat after every completed sweep, so staleness is the signal.
+    # The tolerance is its own setting rather than a multiple of the poll
+    # interval: the watcher also beats after each file, so the thing being
+    # bounded is how long one file may take, which has nothing to do with how
+    # often the directory is checked. Default 30 minutes -- longer than any
+    # single file should take, short enough to notice the same day.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_WATCH_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_WATCH_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["process", "watch", "--poll", "${WATCH_POLL_SECONDS:-10}"]
 
-  # Long-running consumer of batch.ingested. Also the image used for the
-  # map-schema / review-mappings CLIs via `docker compose run --rm mapping ...`.
+  # CLI-only, same as `ingestion`/`pipeline`: run explicitly, e.g.
+  #   docker compose run --rm mapping map-schema --batch-id ... --show
+  #   docker compose run --rm mapping review-mappings list --status needs_review
   mapping:
     build:
       context: .
       dockerfile: services/mapping/Dockerfile
-    restart: unless-stopped
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -267,25 +189,24 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["mapping-consumer"]
+    command: ["map-schema", "--help"]
 
-  # Consumes schema.mapped and writes one attribute observation per source
-  # column per row. Also the image for the `normalize` CLI.
+  # CLI-only. `docker compose run --rm normalization normalize --batch-id ...`
   normalization:
     build:
       context: .
       dockerfile: services/normalization/Dockerfile
-    restart: unless-stopped
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -293,25 +214,22 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["normalization-consumer"]
+    command: ["normalize", "--help"]
 
-  # Consumes records.normalized and judges each observation against the ruleset.
-  # Also the image for the `validate` CLI.
+  # CLI-only. `docker compose run --rm validation validate --batch-id ...`
+  # or `... validation quarantine list --status open`
   validation:
     build:
       context: .
       dockerfile: services/validation/Dockerfile
-    restart: unless-stopped
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -319,25 +237,22 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["validation-consumer"]
+    command: ["validate", "--help"]
 
-  # Consumes records.validated and resolves records to Person/Company entities.
-  # Also the image for the `resolve` CLI.
+  # CLI-only. `docker compose run --rm resolution resolve --batch-id ...`
+  # or `... resolution resolve candidates --status open`
   resolution:
     build:
       context: .
       dockerfile: services/resolution/Dockerfile
-    restart: unless-stopped
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -345,25 +260,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["resolution-consumer"]
+    command: ["resolve", "--help"]
 
-  # Consumes entities.resolved and rebuilds the trusted value per entity field.
-  # Also the image for the `golden` CLI.
+  # CLI-only. `docker compose run --rm golden golden build --entity-id ...`
   golden:
     build:
       context: .
       dockerfile: services/golden/Dockerfile
-    restart: unless-stopped
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -371,23 +282,31 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["golden-consumer"]
+    command: ["golden", "--help"]
 
-  api:
+  # CLI-only. Run explicitly inside the batch window, after `ollama` is up:
+  #   docker compose --profile ai up -d ollama
+  #   docker compose run --rm enrichment enrich run --entity-type company
+  #   docker compose run --rm enrichment enrich run --entity-type person
+  #   docker compose stop ollama
+  # `run` only ever files a pending proposal -- ADR 0014: AI may propose,
+  # never assert. A human decides with:
+  #   docker compose run --rm enrichment enrich proposals list --status pending
+  #   docker compose run --rm enrichment enrich proposals accept --proposal-id <id> --reviewed-by you
+  # Each (entity, field) is asked about at most once ever -- see
+  # enrichment_attempt -- so a caught-up source costs nothing on the next run.
+  enrichment:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
-    restart: unless-stopped
+      dockerfile: services/enrichment/Dockerfile
+    profiles: ["cli"]
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -395,32 +314,61 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Comma-separated. Set these and every /entities and /records route
-      # requires a key; health and /metrics stay open for probes.
-      PCDF_API_KEYS: ${PCDF_API_KEYS:-}
-      # Requests reach this container from the Docker bridge, not 127.0.0.1, so
-      # the loopback exemption does not cover curl from the host. Local-first
-      # development therefore opts out explicitly, and the API says so on every
-      # start rather than leaving it to be inferred.
-      PCDF_ALLOW_UNAUTHENTICATED: ${PCDF_ALLOW_UNAUTHENTICATED:-}
-      # Read-only: the API projects what Alertmanager holds. Notification
-      # routing stays entirely in Alertmanager, so adding Slack or a webhook
-      # later changes its config and nothing here.
-      ALERTMANAGER_URL: http://alertmanager:9093
-    ports:
-      - "${API_PORT:-8000}:8000"
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      AI_ENRICHMENT_RELIABILITY: ${AI_ENRICHMENT_RELIABILITY:-0.20}
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["uv", "run", "--frozen", "--no-sync"]
+    command: ["enrich", "--help"]
+
+  # The only long-running HTTP process in the stack: a browser console for the
+  # four review queues (schema mappings, possible duplicates, quarantined
+  # records, AI enrichment proposals), so working them no longer requires a
+  # terminal. Writes nothing of its own -- every decision goes through the
+  # same functions the review CLIs call. See docs/guides/review-console.md.
+  #   open http://localhost:8000/review/page
+  review_console:
+    build:
+      context: .
+      dockerfile: services/review_console/Dockerfile
+    restart: unless-stopped
+    networks: [local-net]
+    ports:
+      - "${REVIEW_CONSOLE_PORT:-8000}:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Unset by default -- see PCDF_API_KEYS / PCDF_ALLOW_UNAUTHENTICATED in
+      # .env.example. With neither set, the console serves only on loopback.
+      PCDF_API_KEYS: ${PCDF_API_KEYS:-}
+      PCDF_ALLOW_UNAUTHENTICATED: ${PCDF_ALLOW_UNAUTHENTICATED:-}
+    volumes:
+      # Files dropped through the admin dashboard's upload form land here
+      # (review_console/src/review_console/uploads.py), same host-visible
+      # ./data tree ingestion/pipeline/watcher already read from.
+      - ./data:/data
+    # `restart: unless-stopped` only restarts a container that *exited*. A
+    # process still running but unable to reach Postgres stays "up" forever
+    # and keeps serving 503s to anyone who asks. /health/ready already
+    # answers the question; this is what makes the answer count for
+    # something. python3 rather than curl: the image has no curl.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=2)"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s

@@ -1,10 +1,9 @@
 name: CI
 
-# Every suite runs in its own container, which is not a preference: polars,
-# psycopg's binary driver and confluent-kafka are native extensions, and the
-# development machine's Application Control policy blocks them outside Docker.
-# CI matching that exactly is what stops "works in CI" and "works here" from
-# drifting apart.
+# Every suite runs in its own container, which is not a preference: polars and
+# psycopg's binary driver are native extensions, and the development machine's
+# Application Control policy blocks them outside Docker. CI matching that
+# exactly is what stops "works in CI" and "works here" from drifting apart.
 
 on:
   push:
@@ -29,6 +28,17 @@ jobs:
       # ~100 files to settle a question nobody has asked. Lint catches the
       # things that are wrong; formatting here would only make them uniform.
       - run: uvx ruff check .
+      # A second pass with the rules the default set leaves off, and the ones
+      # that matter here are the security ones: this service reads vendor
+      # files and serves personal data, so a hand-built SQL string or an
+      # unvalidated path is the class of defect worth a machine's opinion.
+      # Advisory rather than blocking -- these rules flag safe patterns too
+      # (every dynamic WHERE clause in this codebase is built from literals),
+      # and a lint that cries wolf gets switched off. The point is that a new
+      # one shows up in the log where someone reads it.
+      - name: Security and correctness lint (advisory)
+        continue-on-error: true
+        run: uvx ruff check --select S,B,ASYNC,PTH,DTZ --ignore S101 --output-format github .
 
   migrations:
     # Applied against an empty database, because a migration that only works
@@ -82,6 +92,8 @@ jobs:
           - resolution
           - golden
           - record_pipeline
+          - enrichment
+          - review_console
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -103,30 +115,12 @@ jobs:
         run: >-
           docker run --rm pcdf-${{ matrix.service }}:ci
           uv run --frozen --no-sync python -m pytest tests -v
-
-  test-api:
-    # Separate because the api image runs uvicorn as its CMD rather than being
-    # driven by a CLI, and its tests live at a workspace path rather than
-    # beside the service.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/api/Dockerfile
-          tags: pcdf-api:ci
-          load: true
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
-      - run: >-
-          docker run --rm pcdf-api:ci
-          uv run --frozen --no-sync python -m pytest services/api/tests -v
-      # `common` has no image of its own, and building one for three functions
-      # that touch no database would be more infrastructure than the job needs.
-      # The api image already carries it.
+      # `common` has no image of its own, and building one for a handful of
+      # functions that touch no database would be more infrastructure than
+      # this needs. Any service image already carries it; ingestion's is as
+      # good as any, and this only needs to run once, not once per service.
       - name: Test common
+        if: matrix.service == 'ingestion'
         run: >-
-          docker run --rm pcdf-api:ci
+          docker run --rm pcdf-${{ matrix.service }}:ci
           uv run --frozen --no-sync python -m pytest libs/common/tests -v

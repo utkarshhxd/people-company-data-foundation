@@ -1,8 +1,0 @@
-name,email,web_address,phone_number,employees,founded
-Acme Corp,info@acme.com,www.acme.com,+1 415 555 0100,120,1999
-,not-an-email,,,,
-,,,5551234,42,2001
-Time Machine Ltd,tm@example.com,example.com,+44 20 7123 4567,99000000,2099
-NULL,NULL,NULL,NULL,NULL,NULL
-Tiny Co,tiny@tiny.io,tiny.io,123,3,2020
-Range Inc,hello@range.co,range.co,+1 212 555 0199,50-100,1988

@@ -1,9 +1,9 @@
 import argparse
 import json
-import logging
 import sys
 
 from common.db import connect
+from common.logging import configure
 
 from mapping import repository
 from mapping.pipeline import BatchNotMappable, map_batch
@@ -40,7 +40,7 @@ def print_mappings(source_schema_id: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("mapping")
 
     try:
         result = map_batch(args.batch_id)

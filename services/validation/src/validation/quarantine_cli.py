@@ -7,10 +7,10 @@ stage. A record can sit here indefinitely without anything being lost.
 
 import argparse
 import json
-import logging
 import sys
 
 from common.db import connect
+from common.logging import configure
 
 from validation import repository
 from validation.quarantine import (
@@ -136,7 +136,7 @@ def cmd_stats(_args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("validation")
 
     if args.command == "list":
         return cmd_list(args)

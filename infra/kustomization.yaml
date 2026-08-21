@@ -1,0 +1,39 @@
+# kustomize, not Helm: every other config surface in this repository is plain
+# YAML or a .env file, none of it templated through a second language, and a
+# chart would be the first templating layer in the project.
+#
+# This file has to live here rather than under k8s/base/: kustomize refuses to
+# read a file that is not in or below the directory holding kustomization.yaml
+# (LoadRestrictionsRootOnly, the default -- see `kubectl kustomize --help`),
+# and infra/ is the closest directory that is an ancestor of k8s/base/.
+#
+# Render locally (no cluster needed):    kubectl kustomize infra
+# Apply, once images exist in a registry the cluster can pull from and a real
+# Secret has replaced k8s/base/02-secret.example.yaml -- see
+# infra/k8s/README.md for the full sequence and what has and has not been run
+# against a live cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pcdf
+
+resources:
+  - k8s/base/00-namespace.yaml
+  - k8s/base/01-configmap.yaml
+  # k8s/base/02-secret.example.yaml is deliberately not listed: it is a
+  # template to copy out and fill in, not something to apply as-is. See its
+  # own header.
+  - k8s/base/10-postgres.yaml
+  - k8s/base/12-data-pvc.yaml
+  - k8s/base/13-migrate-job.yaml
+  - k8s/base/20-watcher.yaml
+
+# Placeholders. Point these at wherever your cluster actually pulls from --
+# see infra/k8s/README.md for the build-and-push step each one assumes.
+images:
+  - name: pcdf-ingestion:local
+    newName: REGISTRY/pcdf-ingestion
+    newTag: latest
+  - name: pcdf-watcher:local
+    newName: REGISTRY/pcdf-watcher
+    newTag: latest

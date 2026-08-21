@@ -1,0 +1,41 @@
+# Every service builds with `context: .`, so without this the whole repo is
+# uploaded to the daemon on every build -- including .env and secrets/, which
+# hold real credentials, and .venv/, which is 80 MB of host-platform wheels
+# that would be wrong inside the image anyway. No Dockerfile here COPYs the
+# context wholesale, so nothing listed below was reaching an image; keeping it
+# out of the context is about not handing credentials to the build at all, and
+# about builds that do not re-upload a hundred megabytes to answer "did
+# anything change".
+
+# Credentials.
+.env
+.env.*
+!.env.example
+secrets/
+
+# Host virtualenv and caches. Wrong platform, and rebuilt inside the image.
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv-cache/
+
+# History and tooling.
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Data and operational output. `./data` is bind-mounted at runtime; baking a
+# copy in would ship whatever personal data happened to be sitting in it.
+data/
+backups/
+testfiles/
+
+# Documentation and reports: nothing in an image reads these.
+docs/
+*.md
+!README.md
+pcdf-pipeline-blueprint.html

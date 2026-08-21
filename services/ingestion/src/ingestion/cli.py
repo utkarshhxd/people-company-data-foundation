@@ -1,10 +1,11 @@
 import argparse
-import logging
 import sys
 from pathlib import Path
 
+from common.logging import configure
+
 from ingestion.pipeline import ReingestBlocked, ingest
-from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, UnsupportedFileType
+from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE, MultipleSheets, UnsupportedFileType
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,12 +42,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ingest again even if this exact file was already ingested for this source",
     )
+    parser.add_argument(
+        "--sheet",
+        help=(
+            "which sheet to load from a multi-sheet Excel workbook. Required "
+            "when the file has more than one sheet holding data; each sheet is "
+            "a separate layout and becomes its own batch."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("ingestion")
 
     if not args.path.is_file():
         print(f"error: {args.path} is not a file", file=sys.stderr)
@@ -70,19 +79,19 @@ def main(argv: list[str] | None = None) -> int:
             allow_reingest=args.allow_reingest,
             batch_size=args.batch_size,
             describes=args.describes,
+            sheet=args.sheet,
         )
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
-    except (UnsupportedFileType, KeyError) as exc:
+    except (UnsupportedFileType, KeyError, MultipleSheets) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
     print(
-        f"batch {result.batch_id}: read {result.rows_read}, ingested {result.rows_ingested}, "
-        f"events {'published' if result.events_published else 'NOT published'}"
+        f"batch {result.batch_id}: read {result.rows_read}, ingested {result.rows_ingested}"
     )
-    return 0 if result.events_published else 4
+    return 0
 
 
 if __name__ == "__main__":

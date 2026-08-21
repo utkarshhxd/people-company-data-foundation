@@ -146,6 +146,55 @@ def test_the_dsn_is_built_from_whatever_the_password_turned_out_to_be(
     monkeypatch.setenv("POSTGRES_DB", "pcdf")
     path = write(tmp_path / "pw", "file-password")
     monkeypatch.setenv(f"POSTGRES_PASSWORD{FILE_SUFFIX}", str(path))
-    assert Settings().postgres_dsn == (
-        "postgresql://pcdf_dev:file-password@postgres:5432/pcdf"
+    assert Settings().postgres_dsn.startswith(
+        "postgresql://pcdf_dev:file-password@postgres:5432/pcdf?"
     )
+
+
+def test_a_password_with_url_syntax_in_it_still_reaches_the_right_host(
+    secrets_dir, tmp_path, monkeypatch
+):
+    """The failure this prevents is silent, not loud.
+
+    Unencoded, `p@ss:w/rd#1` re-parses into host `ss`, port `w`, database
+    `rd#1@postgres:5432/pcdf` and a one-character password -- a service that
+    spends its life dialling a host nobody configured, with no error naming
+    the password as the cause.
+    """
+    import psycopg
+
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.setenv("POSTGRES_USER", "pcdf_dev")
+    monkeypatch.setenv("POSTGRES_HOST", "postgres")
+    monkeypatch.setenv("POSTGRES_PORT", "5432")
+    monkeypatch.setenv("POSTGRES_DB", "pcdf")
+    path = write(tmp_path / "pw", "p@ss:w/rd#1")
+    monkeypatch.setenv(f"POSTGRES_PASSWORD{FILE_SUFFIX}", str(path))
+
+    parsed = psycopg.conninfo.conninfo_to_dict(Settings().postgres_dsn)
+    assert parsed["host"] == "postgres"
+    assert parsed["port"] == "5432"
+    assert parsed["dbname"] == "pcdf"
+    assert parsed["user"] == "pcdf_dev"
+    assert parsed["password"] == "p@ss:w/rd#1"
+
+
+def test_every_connection_carries_bounded_waits(monkeypatch):
+    """A Postgres that accepts the connection and then stops answering must
+    not be able to hold a caller forever."""
+    import psycopg
+
+    parsed = psycopg.conninfo.conninfo_to_dict(Settings().postgres_dsn)
+    assert parsed["connect_timeout"] == "10"
+    assert parsed["options"] == "-c statement_timeout=300000"
+
+
+def test_migrations_can_lift_the_statement_timeout(monkeypatch):
+    """Building an index over a large table is a legitimate long statement."""
+    import psycopg
+
+    parsed = psycopg.conninfo.conninfo_to_dict(
+        Settings().dsn(statement_timeout_ms=0, application_name="pcdf-migrate")
+    )
+    assert parsed["options"] == "-c statement_timeout=0"
+    assert parsed["application_name"] == "pcdf-migrate"

@@ -14,6 +14,7 @@ from record_pipeline import watch
 from record_pipeline.watch import (
     Feed,
     FeedInvalid,
+    Handled,
     Watcher,
     candidate_files,
     discover_feeds,
@@ -344,3 +345,66 @@ def test_the_feed_dataclass_names_its_own_directories(tmp_path):
     feed = Feed("apollo", tmp_path, "person", "apollo", 0.5)
     assert feed.done_dir == tmp_path / "_done"
     assert feed.failed_dir == tmp_path / "_failed"
+
+
+# --------------------------------------------------------------------------
+# liveness
+# --------------------------------------------------------------------------
+
+
+def test_a_completed_sweep_is_recorded_as_a_heartbeat(tmp_path):
+    """`restart: unless-stopped` only acts on a process that exited.
+
+    A watcher wedged inside a sweep keeps its container "up" while nothing is
+    being loaded, and from outside that is indistinguishable from an idle one.
+    The heartbeat is what makes staleness observable.
+    """
+    beat = tmp_path / "beat"
+    watcher = Watcher(tmp_path / "watch", poll_seconds=1, heartbeat=beat)
+    assert not beat.exists()
+
+    watcher.sweep()
+    watcher._beat()
+    assert beat.exists()
+    first = beat.read_text(encoding="utf-8")
+    assert first  # an ISO timestamp, not an empty file
+
+
+def test_each_finished_file_beats_so_a_backlog_is_not_mistaken_for_a_hang(
+    tmp_path, monkeypatch
+):
+    beat = tmp_path / "beat"
+    root = tmp_path / "watch"
+    feed_dir = root / "vendor"
+    feed_dir.mkdir(parents=True)
+    (feed_dir / "feed.json").write_text(
+        json.dumps({"entity_type": "person", "source_name": "vendor"}), encoding="utf-8"
+    )
+    for name in ("a.csv", "b.csv"):
+        (feed_dir / name).write_text("full_name\nAda\n", encoding="utf-8")
+
+    beats = []
+    monkeypatch.setattr(
+        watch, "process_file", lambda feed, path: Handled(path, True, "loaded")
+    )
+
+    watcher = Watcher(root, poll_seconds=1, heartbeat=beat)
+    original_beat = watcher._beat
+
+    def counting_beat():
+        beats.append(1)
+        original_beat()
+
+    watcher._beat = counting_beat
+    watcher.sweep()  # first pass only fingerprints; nothing has settled yet
+    handled = watcher.sweep()
+
+    assert len(handled) == 2
+    assert len(beats) == 2, "each finished file should beat"
+
+
+def test_an_unwritable_heartbeat_does_not_stop_the_watcher(tmp_path, caplog):
+    """A monitoring gap must not be traded for an outage."""
+    watcher = Watcher(tmp_path / "watch", poll_seconds=1, heartbeat=tmp_path)
+    watcher._beat()  # tmp_path is a directory: writing to it raises OSError
+    assert any("heartbeat" in r.message for r in caplog.records)

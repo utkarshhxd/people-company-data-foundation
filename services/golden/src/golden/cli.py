@@ -1,10 +1,10 @@
 import argparse
 import json
-import logging
 import sys
 
 from common import lineage
 from common.db import connect
+from common.logging import configure
 
 from golden import repository
 from golden.pipeline import NothingToBuild, build_batch, build_one
@@ -142,7 +142,7 @@ def cmd_stats(_args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure("golden")
 
     if args.command == "build":
         return cmd_build(args)

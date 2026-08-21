@@ -12,8 +12,9 @@ import sys
 from datetime import UTC, datetime
 from types import FrameType
 
-from common import events
+from common import control, events
 from common.config import settings
+from common.db import connect
 from common.heartbeat import beat, default_path, record
 from common.kafka import EventProducer, ensure_topics
 from common.logging import configure
@@ -25,6 +26,8 @@ from validation.rules import RULESET_VERSION
 logger = logging.getLogger(__name__)
 
 CONSUMER_GROUP = "pcdf-validation"
+# Which pipeline_control row decides whether this consumer runs.
+CONTROL_STAGE = "validation"
 POLL_TIMEOUT_SECONDS = 1.0
 
 _running = True
@@ -59,6 +62,37 @@ def _handle(payload: dict, producer: EventProducer) -> None:
     producer.flush()
 
 
+def _apply_control(consumer: Consumer, currently_stopped: bool) -> bool:
+    """Pause or resume this consumer's partitions to match pipeline_control.
+
+    A database it cannot reach is not a pause: it leaves the assignment as it
+    is and lets the next batch fail on its own, which is recorded, rather than
+    inventing a stop nobody asked for.
+    """
+    try:
+        with connect() as conn:
+            paused = control.get(conn, CONTROL_STAGE).paused
+    except Exception as exc:
+        logger.warning("could not read pipeline control: %s", exc)
+        return currently_stopped
+
+    if paused == currently_stopped:
+        return currently_stopped
+
+    assignment = consumer.assignment()
+    if paused:
+        consumer.pause(assignment)
+        logger.warning(
+            "%s is paused; holding %d partition(s). Work stays in the topic.",
+            CONTROL_STAGE, len(assignment),
+        )
+    else:
+        consumer.resume(assignment)
+        logger.warning("%s resumed; consuming %d partition(s) again",
+                       CONTROL_STAGE, len(assignment))
+    return paused
+
+
 def run() -> int:
     configure("validation-consumer")
     signal.signal(signal.SIGTERM, _stop)
@@ -81,12 +115,22 @@ def run() -> int:
     )
 
     heartbeat = default_path("validation-consumer")
+    stopped_partitions = False
     try:
         while _running:
             # Before the poll, so an idle consumer and a busy one both
             # look alive; a stale file means the loop itself stopped.
             beat(heartbeat)
             record("validation-consumer", {"group": CONSUMER_GROUP})
+
+            # Pausing the partitions rather than skipping the poll: the poll is
+            # what keeps this consumer in its group, and a consumer that stops
+            # polling for longer than max.poll.interval.ms is evicted and its
+            # partitions handed to nobody. Paused, it keeps its assignment, the
+            # backlog accumulates in the topic, and no offset moves -- so
+            # resuming reads exactly what was left, in order.
+            stopped_partitions = _apply_control(consumer, stopped_partitions)
+
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
             if message is None:
                 continue

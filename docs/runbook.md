@@ -128,7 +128,9 @@ whatever the source already had rather than resetting it.
 
 Exit codes: `0` fine · `2` bad input · `3` already loaded (use
 `--allow-reingest`) · `5` finished, some rows failed — not a crash, check
-`process errors`.
+`process errors` · `6` validation is paused, so nothing was loaded and the
+file is untouched · `7` stopped part-way because validation paused itself —
+see [Validation stopped itself](#validation-stopped-itself).
 
 For a large file, sample it first — a layout is proven by a sample, only
 volume needs the whole file:
@@ -169,6 +171,55 @@ docker compose run --rm pipeline process reprocess --batch-id <id> --reviewed-by
 understood and judged unusable; `record_error` holds records it couldn't
 process at all — one is a verdict about the data, the other is a failure of
 ours.
+
+### Validation stopped itself
+
+Validation stops when almost everything coming through it is invalid — the
+shape of a changed vendor format, a wrong mapping, or a rule that tightened.
+Nothing has been lost when this happens: records already validated kept their
+verdicts and their quarantine reasons, queued work is waiting in its topic, and
+files sit untouched in their feed directories. What has stopped is anything new
+starting.
+
+```powershell
+docker compose run --rm validation validation-control status
+```
+
+That prints why, who or what stopped it, and the counts that caused it —
+including which rule failed on most records, which is usually the answer.
+
+Work out whether the data or the rules changed. The dominant rule points at it:
+`record.has_identifier` on everything usually means the file's columns stopped
+mapping (a renamed header, or a header row that isn't one); a specific rule like
+`email.syntax` on everything usually means one column now holds something else.
+
+```powershell
+docker compose run --rm validation validation-control history
+docker compose exec -T postgres psql -U pcdf_dev -d pcdf -c "
+SELECT reason_codes, count(*) FROM quarantine_item
+WHERE status='open' GROUP BY 1 ORDER BY 2 DESC LIMIT 5;"
+```
+
+Then start it again. Backlogs drain on their own from there, and a file left in
+a watched feed loads on the next sweep:
+
+```powershell
+docker compose run --rm validation `
+  validation-control resume --reviewed-by you --note "what you found"
+```
+
+A file that stopped part-way is marked `failed` with the reason, and its rows
+stay. Re-run it with `--allow-reingest` once the cause is fixed.
+
+**To stop it yourself**, before or during an investigation:
+
+```powershell
+docker compose run --rm validation `
+  validation-control pause --reason "why" --reviewed-by you
+```
+
+The reason is required. Whoever finds the pipeline stopped is rarely the person
+who stopped it.
 
 ### A whole batch quarantined and it wasn't supposed to
 

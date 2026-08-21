@@ -232,3 +232,19 @@ groups:
             Ollama is probably down or the model is not pulled. Attempts are
             recorded either way, so those (entity, field) pairs will be skipped
             on the next run until their rows are deleted.
+
+      - alert: StagePaused
+        # Not a failure -- a pause is a deliberate state and often the right
+        # one. This fires on it having lasted, because the failure mode is not
+        # stopping, it is forgetting that you did. An hour is long enough that
+        # nobody is still actively looking at it.
+        expr: pcdf_stage_paused == 1
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.stage }} has been paused for over an hour (by {{ $labels.changed_by }})"
+          description: >-
+            Nothing is being lost: queued work is waiting in its topic and
+            files are sitting in their feed directories. Nothing is moving
+            either. Check `validation-control status` for why it stopped, then
+            resume it.

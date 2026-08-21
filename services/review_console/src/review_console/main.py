@@ -12,7 +12,13 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from review_console import pipeline_metrics, stream
 from review_console.alerts_router import router as alerts_router
 from review_console.auth import describe_configuration
-from review_console.router import dashboard_router, entities_router, page_router, router
+from review_console.router import (
+    control_router,
+    dashboard_router,
+    entities_router,
+    page_router,
+    router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,7 @@ app.include_router(dashboard_router)
 app.include_router(entities_router)
 app.include_router(page_router)
 app.include_router(alerts_router)
+app.include_router(control_router)
 
 
 @app.get("/health/live")

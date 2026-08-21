@@ -217,6 +217,33 @@ SPECS: tuple[MetricSpec, ...] = (
         "SELECT outcome, count(*) FROM enrichment_attempt GROUP BY 1",
     ),
 
+    # --- pipeline control ------------------------------------------------
+    # A stopped stage is the loudest thing this system can be doing, and it is
+    # invisible from outside: no container exits, no request fails, nothing
+    # errors. It just quietly stops loading, which looks exactly like a quiet
+    # week.
+    MetricSpec(
+        "pcdf_stage_paused",
+        "1 when a stage has been stopped, by a person or by itself. "
+        "Nothing is lost while this is 1; nothing moves either.",
+        ("stage", "changed_by"),
+        """
+        SELECT stage, changed_by, CASE WHEN state = 'paused' THEN 1 ELSE 0 END
+        FROM pipeline_control
+        """,
+    ),
+    MetricSpec(
+        "pcdf_stage_paused_seconds",
+        "How long the stage has been stopped. The number that matters: a "
+        "two-minute pause is somebody looking, an eight-hour one is somebody "
+        "who forgot.",
+        ("stage",),
+        """
+        SELECT stage, extract(epoch FROM now() - changed_at)
+        FROM pipeline_control WHERE state = 'paused'
+        """,
+    ),
+
     # --- liveness --------------------------------------------------------
     # Age, not a boolean. `restart: unless-stopped` only acts on a process that
     # exited, so "the container is up" and "the loop is turning" are different

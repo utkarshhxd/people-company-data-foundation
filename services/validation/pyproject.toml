@@ -11,6 +11,7 @@ dependencies = [
 [project.scripts]
 validate = "validation.cli:main"
 quarantine = "validation.quarantine_cli:main"
+validation-control = "validation.control_cli:main"
 validation-consumer = "validation.consumer:run"
 
 [dependency-groups]

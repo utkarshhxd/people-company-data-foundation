@@ -13,9 +13,10 @@ judgement can be told apart from a clean bill of health.
 import logging
 from dataclasses import dataclass
 
+from common import control
 from common.db import connect
 
-from validation import repository
+from validation import breaker, repository
 from validation.quarantine import route
 from validation.record_rules import judge_record
 from validation.rules import (
@@ -47,6 +48,9 @@ class ValidateResult:
     judgements: int
     counts: dict[str, int]
     failures: list[dict]
+    # True when this run's outcome stopped the stage. The batch is written
+    # either way; what stopped is everything after it.
+    breaker_tripped: bool = False
 
 
 def _status_for(
@@ -169,6 +173,11 @@ def validate_record(
 
 def validate_batch(batch_id: str) -> ValidateResult:
     with connect() as conn:
+        # Checked before anything is read, so a paused stage costs one query
+        # and changes nothing. Whatever tripped it is in pipeline_control with
+        # the counts that caused it; this only refuses to add to them.
+        control.guard(conn, breaker.STAGE)
+
         batch = repository.get_batch(conn, batch_id)
         if batch is None:
             raise BatchNotValidatable(f"batch {batch_id} not found")
@@ -247,4 +256,24 @@ def validate_batch(batch_id: str) -> ValidateResult:
             "batch %s validated: %d record(s), %d judgement(s) %s",
             batch_id, records, judgements, counts,
         )
-        return ValidateResult(batch_id, records, judgements, counts, failures)
+
+        # After the batch is written, not instead of it. Everything this run
+        # judged keeps its verdict and its quarantine reasons; what the breaker
+        # stops is the *next* batch walking into the same wall.
+        verdict = breaker.trip_if_broken(
+            conn, records, counts.get("invalid", 0),
+            # Errors only. A warning is a judgement about one value, not a
+            # reason a record was held back, and counting them here would let a
+            # noisy-but-harmless rule drag the dominant-cause list off target.
+            {
+                row["rule_id"]: row["failures"]
+                for row in failures
+                if row.get("severity") == SEVERITY_ERROR
+            },
+            context=f"batch {batch_id}",
+        )
+
+        return ValidateResult(
+            batch_id, records, judgements, counts, failures,
+            breaker_tripped=verdict.tripped,
+        )

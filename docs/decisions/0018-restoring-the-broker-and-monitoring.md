@@ -115,3 +115,58 @@ it too.
   file failure. The consumer chain fixes this for the batch path only. Retry
   with backoff, and distinguishing infrastructure failure from bad data, is
   the next piece of work.
+
+## Decision 6 — a stage can be stopped, and stopping it survives a restart
+
+Added after the fact, as a requirement: *"should be able to stop the validation
+and resume — just in case all the validations are failing because of a reason,
+the system should stop and we need to investigate."*
+
+Nothing is lost today when validation rejects everything. Each record keeps its
+raw payload, its judgements and a quarantine item with its reasons; that is the
+design working. What is missing is a limit on how long it goes on being right
+that way. A vendor changes an export format and the pipeline spends the night
+faithfully quarantining an entire feed, one record at a time, and the moment
+worth catching it was record five hundred.
+
+**`pipeline_control` (migration 0023) holds one row per stage.** State lives in
+Postgres rather than in a process because every consumer restarts, and a pause a
+restart clears is not a pause. It is per stage rather than per batch: if
+validation is broken it is broken for everything, and pausing one batch would
+leave the next file walking into the same wall.
+
+**Two callers write it, and they mean different things.** A person, because
+something looks wrong and they want the pipeline to stop while they find out;
+or the stage itself, via `validation.breaker`. Both are undone the same way —
+somebody decides it is fine and resumes it. Nothing resumes on its own. An
+automatic pause that cleared itself after a while would only ever be observed by
+whoever happened to be watching, which is the opposite of the point.
+
+**The breaker is a rate above a floor, not a count.** Fifty invalid records out
+of fifty thousand is a vendor with messy data, which is the premise of this
+system; fifty out of fifty is something broken upstream. The floor (100 records)
+stops a two-row file from tripping it. The threshold (0.95) is deliberately
+close to *everything*: `RecordsBeingQuarantined` is the data-quality alarm, and
+this is the thing that stops the machine. A breaker that cries wolf is one
+everybody learns to ignore, and then it is not there on the night it matters.
+
+**Pausing never discards work**, and each path expresses that differently:
+
+- The **consumers** pause their partitions rather than skipping the poll. The
+  poll is what keeps a consumer in its group, and one that stops polling for
+  longer than `max.poll.interval.ms` is evicted. Paused, it keeps its
+  assignment, the backlog accumulates in the topic, and no offset moves — so
+  resuming reads exactly what was left, in order.
+- The **watcher** leaves files in the drop folder. Moving them to `_failed/`
+  would blame the file for the pipeline's state and need a human to move them
+  back.
+- The **CLI** refuses with exit 6 and touches nothing.
+- A run **stopped part-way** marks its batch `failed`, not `completed`, with its
+  counters intact. Every downstream stage keys off `completed`, so a half-read
+  file handed on as whole is worse than one visibly incomplete — and the rows it
+  did write are real and stay.
+
+**What stopped it is recorded with the counts that caused it**, including which
+rules failed on most records. Stopping without saying why would only move the
+investigation's starting point from "nothing" to "nothing, and it is also
+stopped."

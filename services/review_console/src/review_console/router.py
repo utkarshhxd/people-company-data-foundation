@@ -18,7 +18,16 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from ingestion.readers import DEFAULT_BATCH_SIZE
 from pydantic import BaseModel, Field
 
-from review_console import decisions, entities, pipeline, review, stages, stream, uploads
+from review_console import (
+    control,
+    decisions,
+    entities,
+    pipeline,
+    review,
+    stages,
+    stream,
+    uploads,
+)
 from review_console.admin_page import ADMIN_PAGE
 from review_console.auth import require_api_key
 from review_console.dashboard_page import DASHBOARD_PAGE
@@ -39,6 +48,12 @@ dashboard_router = APIRouter(
 entities_router = APIRouter(
     prefix="/entities",
     tags=["entities"],
+    dependencies=[Depends(require_api_key)],
+)
+
+control_router = APIRouter(
+    prefix="/control",
+    tags=["control"],
     dependencies=[Depends(require_api_key)],
 )
 
@@ -442,3 +457,69 @@ def admin_page() -> str:
     both stay working for anything that already links to them.
     """
     return ADMIN_PAGE
+
+
+# --------------------------------------------------------------------------
+# stopping and starting the pipeline
+# --------------------------------------------------------------------------
+
+
+class PauseRequest(BaseModel):
+    """Stop a stage. The reason is required, not optional.
+
+    Whoever finds the pipeline stopped is not the person who stopped it, and
+    "paused" with no reason attached is indistinguishable from a bug.
+    """
+
+    reason: str = Field(min_length=1, description="Why. Recorded permanently.")
+    reviewed_by: str = Field(min_length=1, description="Who is stopping it.")
+
+
+class ResumeRequest(BaseModel):
+    reviewed_by: str = Field(min_length=1)
+    note: str | None = Field(
+        default=None, description="What was found, or what was changed."
+    )
+
+
+@control_router.get("")
+def get_control() -> dict:
+    """Which stages are running, and why any of them are not.
+
+    A stopped stage is the loudest thing this system can be doing and the least
+    visible: no container exits and no request fails, it simply stops loading.
+    """
+    return control.states()
+
+
+@control_router.get("/history")
+def get_control_history(
+    stage: Annotated[str | None, Query(pattern="^(mapping|normalization|validation|resolution|golden|ingestion)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> dict:
+    """Every stop and start, most recent first."""
+    events = control.recent(stage, limit)
+    return {"count": len(events), "events": events}
+
+
+@control_router.post("/{stage}/pause")
+def pause_stage(
+    stage: Annotated[str, Path(pattern="^(mapping|normalization|validation|resolution|golden|ingestion)$")],
+    body: Annotated[PauseRequest, Body()],
+) -> dict:
+    """Stop a stage until somebody starts it again.
+
+    Nothing in flight is discarded: whatever is mid-record finishes and is
+    recorded, queued work waits in its topic, and files stay in their feed
+    directories. What stops is anything new starting.
+    """
+    return control.pause(stage, body.reason, body.reviewed_by)
+
+
+@control_router.post("/{stage}/resume")
+def resume_stage(
+    stage: Annotated[str, Path(pattern="^(mapping|normalization|validation|resolution|golden|ingestion)$")],
+    body: Annotated[ResumeRequest, Body()],
+) -> dict:
+    """Start a stage again. Backlogs drain on their own from here."""
+    return control.resume(stage, body.reviewed_by, body.note)

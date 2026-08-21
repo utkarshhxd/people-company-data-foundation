@@ -40,11 +40,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from common import control
+from common.db import connect
 from common.heartbeat import beat, default_path, record
 from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, UnsupportedFileType
 
-from record_pipeline.runner import EmptySource, run_file
+from record_pipeline.runner import EmptySource, RunStopped, run_file
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +236,19 @@ def process_file(feed: Feed, path: Path) -> Handled:
         logger.info("feed %s: %s — %s", feed.name, path.name, note)
         _move_aside(path, feed.done_dir, note)
         return Handled(path, True, note)
+    except control.StagePaused as exc:
+        # The file is fine; the pipeline is stopped. Leaving it exactly where
+        # it is means it loads itself when somebody resumes -- moving it to
+        # _failed/ would blame the file for the pipeline's state and need a
+        # human to move it back.
+        note = f"not loaded: {exc}"
+        logger.warning("feed %s: %s left in place — %s", feed.name, path.name, note)
+        return Handled(path, False, note)
+    except RunStopped as exc:
+        note = f"stopped part-way: {exc}"
+        logger.error("feed %s: %s — %s", feed.name, path.name, note)
+        _move_aside(path, feed.failed_dir, note)
+        return Handled(path, False, note)
     except (UnsupportedFileType, EmptySource, KeyError) as exc:
         note = f"{type(exc).__name__}: {exc}"
         logger.warning("feed %s: %s could not be read — %s", feed.name, path.name, note)
@@ -279,6 +294,8 @@ class Watcher:
         # is answerable without holding the file open.
         self._seen: dict[Path, tuple[int, int]] = {}
         self._complained: set[str] = set()
+        # Whether the pause has already been announced.
+        self._said_paused = False
 
     def request_stop(self, *_args) -> None:
         """Finish the file in hand, then exit. Wired to SIGTERM and SIGINT."""
@@ -302,6 +319,23 @@ class Watcher:
             return False
         return before == now
 
+    def _paused(self) -> str | None:
+        """Why the pipeline is stopped, or None if it is running.
+
+        A database that cannot be reached is not a pause. Saying so would stop
+        the watcher for the wrong reason and hide the real one; the load will
+        fail on its own and be recorded, which is the honest outcome.
+        """
+        try:
+            with connect() as conn:
+                state = control.get(conn, "validation")
+        except Exception as exc:
+            logger.warning("could not read pipeline control: %s", exc)
+            return None
+        if not state.paused:
+            return None
+        return f"validation is paused — {state.reason or 'no reason recorded'}"
+
     def _beat(self) -> None:
         """Record that a sweep, or one file within it, completed.
 
@@ -320,6 +354,20 @@ class Watcher:
 
     def sweep(self) -> list[Handled]:
         """One pass: every feed, every file that has settled."""
+        # Asked once per sweep, not once per file, and said once per pause
+        # rather than once per sweep: a pause lasts as long as an investigation
+        # does, and a line every ten seconds for an hour buries the log that
+        # the investigation is reading.
+        paused = self._paused()
+        if paused is not None:
+            if not self._said_paused:
+                logger.warning("not loading anything: %s", paused)
+                self._said_paused = True
+            return []
+        if self._said_paused:
+            logger.info("resumed: loading files again")
+            self._said_paused = False
+
         feeds, problems = discover_feeds(self.root)
         self._complain_once(problems)
 

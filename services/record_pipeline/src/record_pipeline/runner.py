@@ -15,13 +15,14 @@ from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 
-from common import events
+from common import control, events
 from common.canonical import CANONICAL_SCHEMA_VERSION, column_fingerprint
 from common.db import connect
 from common.kafka import EventProducer, ensure_topics
 from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked, file_hash
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_rows
+from validation import breaker
 
 from record_pipeline import repository, screening
 from record_pipeline.context import SAMPLE_SIZE, RunContext, prepare
@@ -31,9 +32,25 @@ logger = logging.getLogger(__name__)
 
 PROGRESS_EVERY = 1000
 
+# How often the run asks whether validation should still be running.
+# The breaker is a rate over a floor, so checking every record would
+# cost a query per record to answer a question that cannot change that
+# fast. This is the resolution at which a run stops -- at 20,000
+# records/minute, within a second or two of the trip.
+BREAKER_CHECK_EVERY = 200
+
 
 class EmptySource(Exception):
     pass
+
+
+class RunStopped(Exception):
+    """The run stopped because a stage was paused, not because it finished.
+
+    Distinct from a failure: every record already committed is complete and
+    correct, the file has not been rejected, and the batch is left
+    un-completed, which every downstream stage already treats as inert.
+    """
 
 
 @dataclass
@@ -52,9 +69,14 @@ class RunResult:
     mapping_reused: bool = False
     events_published: bool = False
     counts: dict[str, int] = field(default_factory=dict)
+    failed_rule_counts: dict[str, int] = field(default_factory=dict)
+
+    stopped: bool = False
 
     def observe(self, outcome: RecordOutcome) -> None:
         self.processed += 1
+        for rule in outcome.failed_rules:
+            self.failed_rule_counts[rule] = self.failed_rule_counts.get(rule, 0) + 1
         if outcome.quarantined:
             self.quarantined += 1
         if outcome.validation_status == "invalid":
@@ -92,6 +114,11 @@ def run_file(
     size = path.stat().st_size
 
     with connect() as conn:
+        # Before the batch row exists. Starting a batch that immediately stops
+        # would leave a `running` batch nobody asked for, and the duplicate
+        # guard would then block re-loading the file once the pause is lifted.
+        control.guard(conn, "validation")
+
         source_id = ingest_repo.get_or_create_source(
             conn, source_name, source_type, reliability, describes
         )
@@ -149,9 +176,24 @@ def run_file(
             ingest_repo.source_describes(conn, source_id),
         )
 
-        ingest_repo.finish_batch(
-            conn, batch_id, result.rows_read, result.processed, result.failed
-        )
+        if result.stopped:
+            # Not 'completed'. Every record already written is complete and
+            # correct, but the file is not -- and 'completed' is exactly what
+            # every downstream stage keys off, so marking it that way would
+            # hand a half-read file to resolution as though it were whole.
+            # 'failed' leaves the rows in place and the batch inert, which is
+            # the same state a crash mid-load produces and the same recovery:
+            # fix the cause, then re-run the file with --allow-reingest.
+            ingest_repo.stop_batch(
+                conn, batch_id, result.rows_read, result.processed, result.failed,
+                f"stopped after {result.processed} record(s): validation was "
+                f"paused because almost everything was coming back invalid. "
+                f"See pipeline_control.",
+            )
+        else:
+            ingest_repo.finish_batch(
+                conn, batch_id, result.rows_read, result.processed, result.failed
+            )
         conn.commit()
 
     return result
@@ -268,6 +310,24 @@ def _drive(
                 "batch %s: %d row(s), %d processed, %d failed",
                 batch_id, result.rows_read, result.processed, result.failed,
             )
+
+        # The record-at-a-time path validates inline, so nothing else would
+        # ever notice a feed that has stopped being usable -- there is no
+        # per-batch verdict to inspect afterwards. This is where that gets
+        # caught, and it is checked against this run's own counts rather than
+        # the whole table so one bad file cannot be hidden by a good history.
+        if result.processed % BREAKER_CHECK_EVERY == 0:
+            verdict = breaker.trip_if_broken(
+                conn, result.processed, result.invalid,
+                result.failed_rule_counts, context=f"batch {batch_id}",
+            )
+            if verdict.tripped:
+                result.stopped = True
+                logger.error(
+                    "batch %s stopped after %d record(s): %s",
+                    batch_id, result.processed, verdict.reason(),
+                )
+                break
 
     if producer is not None:
         producer.flush()

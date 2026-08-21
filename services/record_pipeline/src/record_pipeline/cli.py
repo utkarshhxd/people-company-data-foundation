@@ -3,6 +3,7 @@ import sys
 import time
 from pathlib import Path
 
+from common import control
 from common.db import connect
 from common.logging import configure
 from ingestion import repository as ingest_repo
@@ -158,6 +159,19 @@ def _run(args) -> int:
             async_commit=args.async_commit,
             describes=args.describes,
         )
+    except control.StagePaused as exc:
+        # Expected, not exceptional: somebody stopped the pipeline on purpose,
+        # or it stopped itself. A traceback here would read as a crash, and the
+        # file is untouched either way.
+        print(f"not loaded: {exc}", file=sys.stderr)
+        print(
+            "The file has not been touched. See why with `validation-control "
+            "status`, and start it again with `validation-control resume "
+            "--reviewed-by <you>`, both under "
+            "`docker compose run --rm validation`.",
+            file=sys.stderr,
+        )
+        return 6
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
@@ -179,6 +193,22 @@ def _run(args) -> int:
     # A run with failed records succeeded at its job — it processed what it
     # could and kept the rest. It exits non-zero anyway, because a scheduled
     # load that quietly drops rows is how data goes missing unnoticed.
+    if result.stopped:
+        # The file was not finished, and the rest of it has not been seen. Its
+        # own code, because "stopped on purpose part-way" and "finished with
+        # some bad rows" call for opposite responses: investigate, versus carry
+        # on and replay later.
+        print(
+            "\nStopped part-way: validation paused itself because almost every "
+            "record was coming back invalid.\n"
+            "Nothing is lost — the records already processed kept their "
+            "verdicts and quarantine reasons, and the rest of the file was not "
+            "read.\n"
+            "See why with `validation-control status`; after fixing the cause, "
+            "re-run this file with --allow-reingest.",
+            file=sys.stderr,
+        )
+        return 7
     if result.failed:
         return 5
     return 0

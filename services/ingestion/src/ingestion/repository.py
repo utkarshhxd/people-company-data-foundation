@@ -233,6 +233,31 @@ def fail_batch(conn: psycopg.Connection, batch_id: str, error_message: str) -> N
     conn.commit()
 
 
+def stop_batch(
+    conn: psycopg.Connection, batch_id: str, rows_read: int,
+    rows_ingested: int, rows_skipped: int, reason: str,
+) -> None:
+    """Close a batch that stopped part-way, keeping what it actually did.
+
+    'failed' rather than 'completed' because every downstream stage keys off
+    'completed', and a half-read file handed on as whole is worse than one that
+    is visibly incomplete. The counters are still written: the rows exist, and
+    a batch that says it read nothing while holding two hundred records is a
+    lie that makes the reconciliation checks fail for the wrong reason.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE batch
+            SET status = 'failed', error_message = %s, rows_read = %s,
+                rows_ingested = %s, rows_skipped = %s, finished_at = now()
+            WHERE batch_id = %s
+            """,
+            (reason[:2000], rows_read, rows_ingested, rows_skipped, batch_id),
+        )
+    conn.commit()
+
+
 def set_batch_columns(
     conn: psycopg.Connection, batch_id: str, columns: list[str]
 ) -> None:

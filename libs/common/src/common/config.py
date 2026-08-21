@@ -90,6 +90,22 @@ class Settings(BaseSettings):
     connect_timeout_seconds: int = 10
     statement_timeout_ms: int = 300_000
 
+    # The validation circuit breaker. Nothing is lost when validation rejects
+    # everything -- each record keeps its payload, its judgements and its
+    # quarantine reasons -- but quarantining an entire feed one record at a
+    # time is not a useful night's work, and the moment to catch it is early.
+    #
+    # A rate above a floor, not a count: 50 invalid out of 50,000 is a vendor
+    # with messy data, which is the premise of this system; 50 out of 50 is
+    # something broken upstream. The floor stops a two-row file from tripping
+    # it, because a breaker that cries wolf is one everybody learns to ignore.
+    #
+    # 0.95 is deliberately close to "everything". RecordsBeingQuarantined is
+    # the data-quality alarm; this is the thing that stops the machine.
+    validation_breaker_enabled: bool = True
+    validation_breaker_threshold: float = 0.95
+    validation_breaker_min_records: int = 100
+
     # A local, self-hosted model -- deliberately not a cloud API, so nothing
     # here sends vendor data anywhere. `ollama_model` defaults to a small model
     # suitable for testing; swap it for a larger one without touching any

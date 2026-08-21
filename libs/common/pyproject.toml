@@ -5,6 +5,7 @@ requires-python = ">=3.13"
 dependencies = [
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
+    "confluent-kafka>=2.6",
 ]
 
 [build-system]

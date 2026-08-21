@@ -40,6 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from common.heartbeat import beat, default_path
 from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, UnsupportedFileType
 
@@ -302,20 +303,11 @@ class Watcher:
         return before == now
 
     def _beat(self) -> None:
-        """Record that a sweep completed. Never fatal.
+        """Record that a sweep, or one file within it, completed.
 
-        A watcher that cannot write its heartbeat is still a watcher that can
-        load files, and stopping over it would trade a monitoring gap for an
-        outage. The healthcheck reads staleness, so a file that stops being
-        updated says the same thing as one that was never written.
+        See common.heartbeat for why this is never fatal.
         """
-        try:
-            self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
-            self.heartbeat.write_text(
-                datetime.now(UTC).isoformat(), encoding="utf-8"
-            )
-        except OSError as exc:
-            logger.warning("could not write heartbeat %s: %s", self.heartbeat, exc)
+        beat(self.heartbeat)
 
     def _complain_once(self, problems: list[str]) -> None:
         """Say what is wrong with a feed the first time, not every ten seconds."""
@@ -391,4 +383,4 @@ def default_heartbeat() -> Path:
     feed directory or something a feed would try to load, and a heartbeat is
     neither.
     """
-    return Path(os.environ.get("PCDF_WATCH_HEARTBEAT", "/tmp/pcdf-watcher-heartbeat"))
+    return default_path("watcher")

@@ -11,11 +11,14 @@ batching cannot: one unprocessable row costs one row.
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 
+from common import events
 from common.canonical import CANONICAL_SCHEMA_VERSION, column_fingerprint
 from common.db import connect
+from common.kafka import EventProducer, ensure_topics
 from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked, file_hash
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_rows
@@ -47,6 +50,7 @@ class RunResult:
     review: int = 0
     invalid: int = 0
     mapping_reused: bool = False
+    events_published: bool = False
     counts: dict[str, int] = field(default_factory=dict)
 
     def observe(self, outcome: RecordOutcome) -> None:
@@ -79,6 +83,7 @@ def run_file(
     allow_reingest: bool = False,
     read_ahead: int = DEFAULT_BATCH_SIZE,
     build_golden: bool = True,
+    publish: bool = True,
     fail_fast: bool = False,
     async_commit: bool = False,
     describes: str | None = None,
@@ -140,7 +145,7 @@ def run_file(
         rows = iter_rows(path, read_ahead)
         result = _drive(
             conn, rows, path, batch_id, source_id, entity_type,
-            record_id_column, build_golden, fail_fast,
+            record_id_column, build_golden, publish, fail_fast,
             ingest_repo.source_describes(conn, source_id),
         )
 
@@ -154,9 +159,20 @@ def run_file(
 
 def _drive(
     conn, rows, path: Path, batch_id: str, source_id: str, entity_type: str,
-    record_id_column: str | None, build_golden: bool,
+    record_id_column: str | None, build_golden: bool, publish: bool,
     fail_fast: bool, describes: str = "organisation",
 ) -> RunResult:
+    # pcdf.record.processed only -- deliberately never pcdf.batch.ingested.
+    # That topic is what starts the batch consumer chain, and a file loaded
+    # here has already been carried all the way to its golden values. Both
+    # paths touching one batch is what produced the concurrent-golden-builder
+    # collision in ADR 0012; keeping this path silent on that topic is what
+    # stops it structurally rather than by convention.
+    producer = None
+    if publish:
+        ensure_topics()
+        producer = EventProducer()
+
     # Read ahead far enough to derive the mapping, then process every row
     # including the ones peeked at. The mapping has to exist before the first
     # record is written, because a record's observations record which canonical
@@ -232,12 +248,31 @@ def _drive(
             continue
 
         result.observe(outcome)
+        if producer is not None:
+            producer.publish(
+                events.TOPIC_RECORD_PROCESSED,
+                # Keyed by entity where there is one, so everything about an
+                # entity lands on one partition and a consumer sees its records
+                # in order. Records without an entity key on themselves.
+                key=outcome.entity_id or outcome.record_id,
+                event=events.record_processed(
+                    outcome.record_id, batch_id, source_id, entity_type,
+                    outcome.entity_id, outcome.validation_status,
+                    outcome.quarantined, outcome.match_decision,
+                    datetime.now(UTC),
+                ),
+            )
 
         if result.rows_read % PROGRESS_EVERY == 0:
             logger.info(
                 "batch %s: %d row(s), %d processed, %d failed",
                 batch_id, result.rows_read, result.processed, result.failed,
             )
+
+    if producer is not None:
+        producer.flush()
+        ingest_repo.mark_events_published(conn, batch_id)
+        result.events_published = True
 
     result.counts = {
         "records": result.processed,

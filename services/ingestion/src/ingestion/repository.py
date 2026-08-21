@@ -88,6 +88,22 @@ def find_batches_from_other_sources(
         return [(name, str(batch_id)) for name, batch_id in cur.fetchall()]
 
 
+def mark_events_published(conn: psycopg.Connection, batch_id: str) -> None:
+    """Record that this batch's events reached the broker.
+
+    NULL is the interesting value: rows are committed before anything is
+    published, on purpose, so an event can never reference a row that does not
+    exist. The cost of that order is that a broker outage leaves batches whose
+    downstream stages will never be triggered. This column is what makes that
+    gap queryable and replayable instead of silent.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE batch SET events_published_at = now() WHERE batch_id = %s", (batch_id,)
+        )
+    conn.commit()
+
+
 def find_completed_batch(conn: psycopg.Connection, source_id: str, file_hash: str) -> str | None:
     with conn.cursor() as cur:
         cur.execute(

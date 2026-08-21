@@ -89,9 +89,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(
-        f"batch {result.batch_id}: read {result.rows_read}, ingested {result.rows_ingested}"
+        f"batch {result.batch_id}: read {result.rows_read}, ingested {result.rows_ingested}, "
+        f"events {'published' if result.events_published else 'NOT published'}"
     )
-    return 0
+    # 4, not 0, when the rows landed but the announcement did not: the load
+    # succeeded and downstream will never hear about it, which is a distinct
+    # outcome from both success and failure.
+    return 0 if result.events_published else 4
 
 
 if __name__ == "__main__":

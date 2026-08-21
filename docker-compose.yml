@@ -6,6 +6,7 @@ networks:
 
 volumes:
   postgres-data:
+  kafka-data:
   ollama-models:
 
 services:
@@ -46,6 +47,50 @@ services:
       retries: 10
       start_period: 10s
 
+  # The broker. Records do not move between stages on it -- a record's whole
+  # turn through the pipeline is one function call in one transaction (ADR
+  # 0012) -- but a *batch* is announced on it, and that announcement is what
+  # drives the stage consumers below and anything downstream that wants to
+  # know a record is ready. Postgres stays the source of truth; every event
+  # here carries references to committed rows, never values.
+  kafka-data-init:
+    image: busybox:1.36
+    networks: [local-net]
+    command: ["chown", "-R", "1000:1000", "/data"]
+    volumes:
+      - kafka-data:/data
+
+  kafka:
+    image: apache/kafka:4.3.1
+    restart: unless-stopped
+    networks: [local-net]
+    depends_on:
+      kafka-data-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-29092}
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    ports:
+      - "${KAFKA_PORT:-29092}:29092"
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   migrate:
     build:
       context: .
@@ -81,6 +126,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./data:/data
@@ -89,6 +135,8 @@ services:
       - ./tools:/tools:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["ingest", "--help"]
@@ -109,6 +157,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
@@ -118,6 +167,8 @@ services:
       - ./tools:/tools:ro
     depends_on:
       postgres:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["process", "--help"]
@@ -140,13 +191,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
       AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
       PCDF_WATCH_DIR: /data/inbox/watch
-      PCDF_WATCH_HEARTBEAT: /tmp/pcdf-watcher-heartbeat
-      PCDF_WATCH_STALE_AFTER: ${PCDF_WATCH_STALE_AFTER:-1800}
+      PCDF_HEARTBEAT: /tmp/pcdf-watcher-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_WATCH_STALE_AFTER:-1800}
     volumes:
       # Writable, unlike the other bind mounts here: the watcher moves each
       # file into _done/ or _failed/ once it has handled it.
@@ -161,7 +213,7 @@ services:
     # often the directory is checked. Default 30 minutes -- longer than any
     # single file should take, short enough to notice the same day.
     healthcheck:
-      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_WATCH_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_WATCH_STALE_AFTER']) else 1)"]
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -169,19 +221,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
     command: ["process", "watch", "--poll", "${WATCH_POLL_SECONDS:-10}"]
 
-  # CLI-only, same as `ingestion`/`pipeline`: run explicitly, e.g.
+  # Consumes batch.ingested, derives the column layout's mapping, publishes
+  # schema.mapped. Long-running -- but the CLIs are still there, because the
+  # entrypoint is unchanged and only the default command moved:
   #   docker compose run --rm mapping map-schema --batch-id ... --show
   #   docker compose run --rm mapping review-mappings list --status needs_review
   mapping:
     build:
       context: .
       dockerfile: services/mapping/Dockerfile
-    profiles: ["cli"]
+    restart: unless-stopped
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -189,6 +245,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PCDF_HEARTBEAT: /tmp/pcdf-mapping-consumer-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
@@ -196,17 +255,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["map-schema", "--help"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["mapping-consumer"]
 
-  # CLI-only. `docker compose run --rm normalization normalize --batch-id ...`
+  # Consumes schema.mapped, writes one observation per source column per row,
+  # publishes records.normalized.
+  #   docker compose run --rm normalization normalize --batch-id ...
   normalization:
     build:
       context: .
       dockerfile: services/normalization/Dockerfile
-    profiles: ["cli"]
+    restart: unless-stopped
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -214,22 +283,35 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PCDF_HEARTBEAT: /tmp/pcdf-normalization-consumer-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["normalize", "--help"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["normalization-consumer"]
 
-  # CLI-only. `docker compose run --rm validation validate --batch-id ...`
-  # or `... validation quarantine list --status open`
+  # Consumes records.normalized, judges every value and routes what cannot be
+  # used into quarantine, publishes records.validated.
+  #   docker compose run --rm validation validate --batch-id ...
+  #   docker compose run --rm validation quarantine list --status open
   validation:
     build:
       context: .
       dockerfile: services/validation/Dockerfile
-    profiles: ["cli"]
+    restart: unless-stopped
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -237,22 +319,35 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PCDF_HEARTBEAT: /tmp/pcdf-validation-consumer-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["validate", "--help"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["validation-consumer"]
 
-  # CLI-only. `docker compose run --rm resolution resolve --batch-id ...`
-  # or `... resolution resolve candidates --status open`
+  # Consumes records.validated, links records to entities, publishes
+  # entities.resolved.
+  #   docker compose run --rm resolution resolve --batch-id ...
+  #   docker compose run --rm resolution resolve candidates --status open
   resolution:
     build:
       context: .
       dockerfile: services/resolution/Dockerfile
-    profiles: ["cli"]
+    restart: unless-stopped
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -260,21 +355,34 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PCDF_HEARTBEAT: /tmp/pcdf-resolution-consumer-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["resolve", "--help"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["resolution-consumer"]
 
-  # CLI-only. `docker compose run --rm golden golden build --entity-id ...`
+  # Consumes entities.resolved and builds each entity's trusted values, then
+  # publishes golden.updated -- the topic anything downstream subscribes to.
+  #   docker compose run --rm golden golden build --entity-id ...
   golden:
     build:
       context: .
       dockerfile: services/golden/Dockerfile
-    profiles: ["cli"]
+    restart: unless-stopped
     networks: [local-net]
     environment:
       POSTGRES_HOST: postgres
@@ -282,14 +390,25 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PCDF_HEARTBEAT: /tmp/pcdf-golden-consumer-heartbeat
+      PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     entrypoint: ["uv", "run", "--frozen", "--no-sync"]
-    command: ["golden", "--help"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["golden-consumer"]
 
   # CLI-only. Run explicitly inside the batch window, after `ollama` is up:
   #   docker compose --profile ai up -d ollama
@@ -314,6 +433,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
@@ -346,6 +466,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Unset by default -- see PCDF_API_KEYS / PCDF_ALLOW_UNAUTHENTICATED in
       # .env.example. With neither set, the console serves only on loopback.

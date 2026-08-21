@@ -408,3 +408,37 @@ def test_an_unwritable_heartbeat_does_not_stop_the_watcher(tmp_path, caplog):
     watcher = Watcher(tmp_path / "watch", poll_seconds=1, heartbeat=tmp_path)
     watcher._beat()  # tmp_path is a directory: writing to it raises OSError
     assert any("heartbeat" in r.message for r in caplog.records)
+
+
+# --------------------------------------------------------------------------
+# the two paths must not both process one batch
+# --------------------------------------------------------------------------
+
+
+def test_the_record_at_a_time_path_never_starts_the_consumer_chain():
+    """`pcdf.batch.ingested` is what wakes the five stage consumers.
+
+    A file loaded here has already been carried to its golden values inside one
+    transaction per record, so announcing it on that topic would hand the same
+    batch to the batch chain as well. Two builders on one entity is exactly the
+    collision ADR 0012 recorded (a batch CLI run while the consumer chain was
+    working the same batch), and the reason it cannot happen here is that this
+    path is structurally silent on that topic -- not that anyone remembers.
+
+    Read off the syntax tree rather than the source text, so a comment naming
+    the topic (there is one, explaining this) is not mistaken for a publish.
+    """
+    import ast
+
+    from record_pipeline import runner
+
+    tree = ast.parse(Path(runner.__file__).read_text(encoding="utf-8"))
+    topics = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr.startswith("TOPIC_")
+    }
+    assert topics == {"TOPIC_RECORD_PROCESSED"}, (
+        f"the record-at-a-time path publishes {topics}; only the per-record "
+        "event belongs here"
+    )

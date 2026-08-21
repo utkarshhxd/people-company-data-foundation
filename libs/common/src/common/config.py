@@ -72,6 +72,11 @@ class Settings(BaseSettings):
 
     log_level: str = "info"
 
+    # Kafka is a notification layer, never the source of truth: events carry
+    # references to committed rows, and a consumer reads the values back out of
+    # Postgres. See common.events.
+    kafka_bootstrap_servers: str = "localhost:9092"
+
     # Named on every connection so `pg_stat_activity` says which service is
     # holding a lock. Overridden per service at startup; the default is only
     # what an unconfigured process reports.

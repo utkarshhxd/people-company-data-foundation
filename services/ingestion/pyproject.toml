@@ -6,6 +6,7 @@ dependencies = [
     "polars>=1.17",
     "fastexcel>=0.12",
     "psycopg[binary]>=3.2",
+    "confluent-kafka>=2.6",
     "common",
 ]
 

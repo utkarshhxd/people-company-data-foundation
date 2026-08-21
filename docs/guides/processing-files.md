@@ -70,9 +70,14 @@ docker compose run --rm golden        golden build --batch-id <id>
 ```
 
 `ingest` only writes raw rows — no mapping, normalizing, validating, or
-resolving. Each later stage reads what the previous one wrote from Postgres.
-There's no listener, no broker, nothing subscribed to anything: a stage runs
-because you ran it.
+resolving. Each later stage reads what the previous one wrote from Postgres;
+the event that reaches it carries a batch id and nothing else.
+
+Once the rows are committed, `ingest` publishes `pcdf.batch.ingested` and the
+five stage consumers carry the batch the rest of the way on their own. To do
+the stages by hand instead — reprocessing after a rule change, say — run them
+with `docker compose run --rm <service> …` as below; the CLI and the consumer
+call the same function.
 
 ### Large files
 

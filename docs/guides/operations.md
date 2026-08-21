@@ -75,8 +75,9 @@ idempotent can't be re-run), and all **seven** service images
 `golden`, `record_pipeline`) built and their test suites run in-container,
 plus `libs/common`'s suite riding along on the `ingestion` build.
 
-No Kafka, no message broker, nothing to spin up for CI beyond Postgres — the
-whole system is CLI processes talking straight to the database.
+CI needs nothing beyond Postgres: every suite tests functions that talk to the
+database, and the consumers are a thin shell over those same functions, so
+none of them needs a broker to be exercised.
 
 ## Running tests
 

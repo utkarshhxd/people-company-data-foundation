@@ -37,7 +37,8 @@ what the code actually does today.
 ## The shape of it
 
 ```
-docker-compose.yml       postgres, migrate job, seven CLI services, the watcher
+docker-compose.yml       postgres, kafka, migrate job, five stage consumers,
+                         the watcher, the review console
 db/migrations/           numbered .sql migrations, applied by `migrate`
 libs/common/             settings, db, migration runner, canonical schema
 
@@ -58,9 +59,11 @@ tools/sql/                hand-verification queries
 data/inbox/watch/         one directory per feed; drop files in, they load
 ```
 
-**Everything runs in Docker.** No native install to manage — `postgres`,
-`migrate`, `watcher` and `review_console` start with the stack; every other
-service is CLI-only, invoked with `docker compose run --rm <service> ...`.
+**Everything runs in Docker.** No native install to manage. `postgres`,
+`kafka`, `migrate`, the five stage consumers, `watcher` and `review_console`
+start with the stack; `ingestion`, `pipeline` and `enrichment` are CLI-only,
+invoked with `docker compose run --rm <service> ...`. Every stage's CLI stays
+reachable that way too — the consumer is only its default command.
 
 ## Two ways a record gets processed — same rules either way
 
@@ -72,16 +75,28 @@ service is CLI-only, invoked with `docker compose run --rm <service> ...`.
 - **The stage CLIs** (`map-schema`, `normalize`, `validate`, `resolve`,
   `golden build`), each against a batch already in Postgres by `--batch-id`,
   chained by hand. This is the path for *reprocessing* — redoing one stage
-  after a rule change, without touching the source file again. Nothing
-  triggers the next stage automatically here; the operator does.
+  after a rule change, without touching the source file again. Running
+  `ingest` instead of `process run` puts a batch on this path and the
+  consumers chain the stages for you; the CLIs are for when you want one
+  stage and only one.
 
 Both call the same underlying functions, so they can never disagree about
 what a record means. See [ADR 0012](docs/decisions/0012-record-at-a-time-processing.md).
 
-There is **no message broker** in this system. A record moving from one
-stage to the next is a function call or a row already sitting in Postgres —
-never an event on a queue. Simpler to run, simpler to reason about, and
-nothing to have "listening" for work that shows up once in a while.
+**Kafka carries announcements, never data.** A record moving between stages
+inside the record-at-a-time path is a function call in one transaction, and a
+batch stage reads its rows out of Postgres — no value ever travels on a queue.
+What does travel is a reference: `batch.ingested` says a batch is committed and
+ready, and the five stage consumers work from it. Postgres stays the source of
+truth, so an event can go stale against nothing.
+
+That indirection is what stops one stopped service costing anything. Take
+`resolution` down and its work accumulates in `pcdf.records.validated`; offsets
+are committed only after a batch is processed, so starting it again picks up
+exactly where it left off. Rows are committed *before* anything is published,
+which means an event can never point at a row that does not exist — and when
+the broker is unreachable, `batch.events_published_at` stays NULL so the gap is
+queryable instead of silent.
 
 ## Where AI is, and isn't, allowed
 
@@ -122,6 +137,8 @@ Full reasoning: [ADR 0011](docs/decisions/0011-increment-11-review-findings.md),
 | 14 | The commercial profile: captured-but-ignored vendor columns get a canonical home; where enrichment is allowed to live | [0014](docs/decisions/0014-commercial-profile-and-enrichment.md) |
 | 15 | Operable by someone else: a review console, feeds that load themselves, credentials from files | [0015](docs/decisions/0015-operable-by-someone-else.md) |
 | 16 | Kubernetes manifests: same pieces, across a cluster | [0016](docs/decisions/0016-kubernetes-deployment.md) |
+| 17 | AI schema mapping and enrichment, both against a local model, both only ever proposing | [0017](docs/decisions/0017-ai-schema-mapping-and-enrichment.md) |
+| 18 | The broker and the monitoring stack come back — announcements, not values, and a stopped stage becomes a queue | [0018](docs/decisions/0018-restoring-the-broker-and-monitoring.md) |
 
 Every ADR is kept even after the code it describes changes — it's the record
 of *why*, not a promise the description still matches today's code. These

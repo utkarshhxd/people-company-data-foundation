@@ -56,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument(
+        "--no-publish", action="store_true",
+        help="process without emitting a record.processed event per record",
+    )
+    run.add_argument(
         "--fail-fast", action="store_true",
         help=(
             "stop at the first record that throws instead of recording it and "
@@ -149,6 +153,7 @@ def _run(args) -> int:
             allow_reingest=args.allow_reingest,
             read_ahead=args.read_ahead,
             build_golden=not args.no_golden,
+            publish=not args.no_publish,
             fail_fast=args.fail_fast,
             async_commit=args.async_commit,
             describes=args.describes,

@@ -1,9 +1,12 @@
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
+from common import events
 from common.db import connect
+from common.kafka import EventProducer, ensure_topics
 
 from ingestion import repository
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_file
@@ -22,6 +25,7 @@ class IngestResult:
     rows_read: int
     rows_ingested: int
     rows_skipped: int
+    events_published: bool = False
 
 
 def file_hash(path: Path) -> str:
@@ -147,11 +151,53 @@ def ingest(
         conn.commit()
         logger.info("batch %s committed %d record(s)", batch_id, rows_ingested)
 
+        # Only now, with rows committed, publish a reference to them. This
+        # order is the load-bearing property: an event can never point at a
+        # row that does not exist.
+        published = _publish(conn, batch_id, source_id, entity_type, path.name, rows_ingested)
+
     return IngestResult(
         batch_id=batch_id,
         source_id=source_id,
         rows_read=rows_read,
         rows_ingested=rows_ingested,
         rows_skipped=0,
+        events_published=published,
     )
+    return True
+
+
+def _publish(
+    conn, batch_id: str, source_id: str, entity_type: str, file_name: str, rows_ingested: int
+) -> bool:
+    """Announce the batch. One event, not one per row.
+
+    Every stage works batch-wise and reads its rows out of Postgres, so the
+    batch id is the only reference that carries meaning downstream -- a
+    20,000-row file emitting 20,000 messages produced nothing any consumer
+    wanted (ADR 0011).
+
+    Publishing failure is reported, never raised. The rows are committed and
+    the batch is 'completed' by the time this runs; failing the ingestion now
+    would tell the caller the load did not happen, which is false. Leaving
+    events_published_at NULL makes the gap visible and replayable instead.
+    """
+    try:
+        ensure_topics()
+        producer = EventProducer()
+        producer.publish(
+            events.TOPIC_BATCH_INGESTED,
+            key=batch_id,
+            event=events.batch_ingested(
+                batch_id, source_id, entity_type, file_name, rows_ingested,
+                datetime.now(UTC),
+            ),
+        )
+        producer.flush()
+    except Exception as exc:
+        logger.error("batch %s ingested but publishing failed: %s", batch_id, exc)
+        return False
+
+    repository.mark_events_published(conn, batch_id)
+    logger.info("batch %s published batch.ingested for %d row(s)", batch_id, rows_ingested)
     return True

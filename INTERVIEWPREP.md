@@ -6,7 +6,7 @@ A study guide for talking through this project in an interview: what it does, wh
 
 ## 1. The 30-second pitch
 
-PCDF takes messy vendor exports (CSV/Excel) of people and companies, and turns them into **one trusted, deduplicated record per real-world entity**, while keeping every original value traceable back to the exact source cell it came from — forever. Nothing is ever thrown away, even values that lose. It's a record-at-a-time pipeline (no message broker) with six stages: **ingest → map schema → normalize → validate/quarantine → resolve entities → build golden record**, plus a review console for the four places a human has to make a call, and an AI-assisted path that is only ever allowed to *propose*, never *assert*, a fact.
+PCDF takes messy vendor exports (CSV/Excel) of people and companies, and turns them into **one trusted, deduplicated record per real-world entity**, while keeping every original value traceable back to the exact source cell it came from — forever. Nothing is ever thrown away, even values that lose. It's a record-at-a-time pipeline (Kafka announces batches; it never carries values) with six stages: **ingest → map schema → normalize → validate/quarantine → resolve entities → build golden record**, plus a review console for the four places a human has to make a call, and an AI-assisted path that is only ever allowed to *propose*, never *assert*, a fact.
 
 ---
 
@@ -36,7 +36,7 @@ flowchart TD
 - **Record-at-a-time** (`pipeline process run` / `process watch`): the production path. One record goes through every stage inside one transaction before the next record starts. This is what the watcher uses when a file lands in `data/inbox/watch/<feed>/`.
 - **Stage CLIs** (`map-schema`, `normalize`, `validate`, `resolve`, `golden build`), each run by hand against a `--batch-id` already sitting in Postgres. This is the *reprocessing* path — redo one stage after a rule change without re-touching the source file.
 
-**No message broker anywhere.** A record moving to the next stage is a function call, or a row already in Postgres — never an event on a queue. See ADR 0012.
+**The broker carries references, never values.** A record moving to the next stage is a function call or a row already in Postgres; Kafka announces that a *batch* is committed and ready, and the stage consumers work from that. Postgres is the source of truth, so an event cannot go stale against it. See ADR 0012 and ADR 0018.
 
 ---
 
@@ -162,8 +162,8 @@ A: They call the *exact same underlying functions* (`set_mapping`, `accept_candi
 
 ## 6. System-design / "what would you change" questions
 
-**Q: Why no Kafka/message broker, and would you ever add one back?**
-A: The system doesn't need decoupled consumers — every stage is a deterministic function of Postgres state, and record-at-a-time means there's no "batch waiting for a straggler." A broker would add operational surface (another thing to run, another place messages can be lost/duplicated/reordered) with nothing to buy in return, given the actual failure mode is "one file lands every so often," not "high sustained event volume." It would earn its place if this needed to fan out to independent downstream consumers that shouldn't share a transaction with the pipeline (e.g. a separate analytics team subscribing to golden-record changes) — at which point you'd publish domain events *after* commit, same discipline the old ingestion-era design already used ("commit-then-publish").
+**Q: Kafka is in the stack — but a record never travels on it. Why?**
+A: Two different questions got separated. *Moving a record between stages* is a correctness problem: a record's normalize/validate/resolve/golden work happens in one transaction so it lands whole or not at all (ADR 0012), and splitting that across a broker would reintroduce the window where a record exists but its entity's values haven't caught up. Resolution also depends on file order — record 900 has to match the entity record 12 created — and a record carries several identity keys (email, phone, linkedin, name+company), so there is no single partition key that keeps everything which might touch one entity on one partition. Serializing that is what the per-key advisory locks do; Kafka partitioning cannot express it. *Announcing that a batch is ready* is a decoupling problem, and that is what Kafka does here: `batch.ingested` carries a batch id, the stage consumers work from it, and a stopped consumer means work waits in the topic rather than being lost. Rows are committed before anything is published, so an event can never reference a row that doesn't exist; if the broker is down, `batch.events_published_at` stays NULL and the gap is queryable and replayable.
 
 **Q: How would you shard/scale this?**
 A: Resolution is the actual bottleneck to parallelizing — records are resolved strictly in file order, one at a time, because a later record can match an entity an earlier record in the *same file* just created, and that ordering guarantee is what's currently sacrificed for any parallelism. You'd need to partition by blocking key (email domain, name+city bucket) so cross-partition collisions become rare enough to reconcile after the fact, then explicitly design the "two partitions created the same entity independently" merge path — which the schema already supports (`entity_merge` never deletes an id).

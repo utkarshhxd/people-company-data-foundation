@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "psycopg[binary]>=3.2",
+    "confluent-kafka>=2.6",
     "common",
     # The per-record path does not reimplement any stage: it composes the same
     # functions the batch services expose, so the two can never disagree about

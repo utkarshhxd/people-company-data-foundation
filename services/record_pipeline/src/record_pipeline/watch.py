@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from common.heartbeat import beat, default_path
+from common.heartbeat import beat, default_path, record
 from ingestion.pipeline import ReingestBlocked
 from ingestion.readers import CSV_SUFFIXES, UnsupportedFileType
 
@@ -308,6 +308,7 @@ class Watcher:
         See common.heartbeat for why this is never fatal.
         """
         beat(self.heartbeat)
+        record("watcher", {"root": str(self.root)})
 
     def _complain_once(self, problems: list[str]) -> None:
         """Say what is wrong with a feed the first time, not every ten seconds."""

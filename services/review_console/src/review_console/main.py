@@ -6,8 +6,11 @@ import psycopg
 from common.config import settings
 from common.logging import configure
 from fastapi import FastAPI, Response
+from prometheus_client import REGISTRY
+from prometheus_fastapi_instrumentator import Instrumentator
 
-from review_console import stream
+from review_console import pipeline_metrics, stream
+from review_console.alerts_router import router as alerts_router
 from review_console.auth import describe_configuration
 from review_console.router import dashboard_router, entities_router, page_router, router
 
@@ -49,10 +52,21 @@ app = FastAPI(
     ),
 )
 
+# The console is the only long-running HTTP process in the stack, so it
+# carries the pipeline gauges rather than adding an exporter container for a
+# handful of aggregate queries. `/metrics` is outside the API-key dependency
+# for the same reason the health endpoints are: Prometheus scrapes before
+# credentials are necessarily in place, and the series here are counts and
+# ages, never a name, an address or a vendor's row.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+REGISTRY.register(pipeline_metrics.PipelineCollector())
+REGISTRY.register(pipeline_metrics.KafkaCollector())
+
 app.include_router(router)
 app.include_router(dashboard_router)
 app.include_router(entities_router)
 app.include_router(page_router)
+app.include_router(alerts_router)
 
 
 @app.get("/health/live")

@@ -6,6 +6,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "psycopg[binary]>=3.2",
+    "confluent-kafka>=2.6",
+    "prometheus-client>=0.21",
+    "prometheus-fastapi-instrumentator>=7.0",
     "pydantic-settings>=2.6",
     # File uploads: FastAPI's Form()/File()/UploadFile parsing needs this,
     # even though nothing here imports it by name.

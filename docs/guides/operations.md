@@ -1,9 +1,103 @@
 # Operations
 
-Backup and restore, continuous integration, the test suites, and what lives
-under `tools/`.
+Metrics, alerts, backup and restore, continuous integration, the test suites,
+and what lives under `tools/`.
 
 Part of the [People & Company Data Foundation](../../README.md).
+
+## Metrics and dashboards
+
+The **Data Foundation** dashboard in Grafana (http://localhost:3001) watches the
+failure modes that are otherwise silent — the ones where every container stays
+green while the data quietly degrades:
+
+- a quarantined record loses nothing by waiting, and nothing ages the queue
+- an unreviewed mapping means values are captured but attributed to no field,
+  so they are never validated or resolved on
+- an open match candidate means one real entity is represented by two ids
+
+```powershell
+curl.exe -s http://localhost:8000/metrics | Select-String "^pcdf_"
+```
+
+```
+pcdf_quarantine_items{status="open"} 3.0
+pcdf_oldest_open_quarantine_age_seconds 60523.33
+pcdf_column_mappings{status="needs_review"} 2.0
+pcdf_records_validated{status="invalid"} 5.0
+pcdf_entities{entity_type="company",status="active"} 18.0
+pcdf_golden_contested_values 9.0
+pcdf_golden_mean_confidence{entity_type="company"} 0.667
+```
+
+These are **gauges queried from Postgres at scrape time**, not counters
+incremented in each service. Queue depth is an accumulated-state question, and
+an in-process counter answers it badly: it resets on restart and double-counts
+after a Kafka replay. Results are cached 12s against a 15s scrape interval.
+
+**The age metrics are the ones to alert on.** A count of 3 is fine; a count of 3
+that has been 3 for a fortnight is a process failure, and no count alone reveals
+that.
+
+Two things are read from somewhere other than Postgres, and they fail
+independently of it and of each other. `pcdf_kafka_consumer_lag` comes from the
+broker, so a database outage does not blank it out and a broker outage does not
+blank out the queue depths. `pcdf_service_heartbeat_age_seconds` comes from the
+`service_heartbeat` table, which every consumer and the watcher upsert into as
+they turn their loop -- the container healthcheck reads a file, but a file is
+only visible inside the container that wrote it, and "is the watcher sweeping"
+is a question asked from outside.
+
+If Postgres is unreachable the endpoint still returns 200 with
+`pcdf_metrics_up 0` and no stale gauges — monitoring that dies with the database
+is useless exactly when it is needed. `pcdf_kafka_up` does the same for the
+broker. Serving the last scrape's numbers instead would be worse than serving
+none: a queue depth from ten minutes ago, presented as current, is what somebody
+makes a decision on.
+
+## Alerts
+
+Sixteen rules in `../../infra/prometheus/rules/alerts.yml`, delivered to
+Alertmanager at http://localhost:9093. Almost all of them alert on **age rather
+than depth**: a queue of three is fine, three that have not moved in a fortnight
+means reviewing stopped, and no count reveals that.
+
+What is firing is visible at **http://localhost:8000/alerts/page**, backed by
+`GET /alerts`. Both are read-only projections: rules, grouping, inhibition and
+resolution stay in Prometheus and Alertmanager, and no notification channel is
+encoded in the API — so adding Slack is a routing change that touches no
+application code.
+
+### Routing them somewhere real
+
+With `ALERTMANAGER_WEBHOOK_URL` unset, the route uses a receiver with no
+destination: alerts collect in the UI at :9093 and nothing leaves the machine.
+Set it and every alert is delivered:
+
+```bash
+# .env — Slack, Teams and Discord all accept a URL of this shape
+ALERTMANAGER_WEBHOOK_URL=https://hooks.slack.com/services/...
+
+docker compose up -d alertmanager
+```
+
+The config is a template rendered at container start, because Alertmanager does
+not expand environment variables in its own config. The URL is a credential —
+anyone holding it can post into that channel — so it is written to a file with
+`umask 077` and read via `url_file`. It is never substituted into the config, so
+it is not in the image and not in `docker inspect`. Unsetting the variable
+removes the file rather than leaving a live credential in the volume.
+
+Prove delivery without waiting for a real alert:
+
+```bash
+docker compose exec -T alertmanager amtool alert add alertname=DeliveryTest \
+    severity=critical --alertmanager.url=http://localhost:9093
+```
+
+`severity=critical` has `group_wait: 0s`, so it is sent immediately.
+
+See `../runbook.md` for the full table of rules and what to do about each.
 
 ## `tools/`
 

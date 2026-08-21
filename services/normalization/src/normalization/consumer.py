@@ -14,7 +14,7 @@ from types import FrameType
 
 from common import events
 from common.config import settings
-from common.heartbeat import beat, default_path
+from common.heartbeat import beat, default_path, record
 from common.kafka import EventProducer, ensure_topics
 from common.logging import configure
 from confluent_kafka import Consumer, KafkaError
@@ -82,6 +82,7 @@ def run() -> int:
             # Before the poll, so an idle consumer and a busy one both
             # look alive; a stale file means the loop itself stopped.
             beat(heartbeat)
+            record("normalization-consumer", {"group": CONSUMER_GROUP})
             message = consumer.poll(POLL_TIMEOUT_SECONDS)
             if message is None:
                 continue

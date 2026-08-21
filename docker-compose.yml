@@ -7,6 +7,9 @@ networks:
 volumes:
   postgres-data:
   kafka-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
   ollama-models:
 
 services:
@@ -90,6 +93,76 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    restart: unless-stopped
+    networks: [local-net]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Where a firing alert goes. Self-contained: alerts collect in its own UI and
+  # nothing leaves the machine until a webhook is configured, because a
+  # destination is something somebody has to own.
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    networks: [local-net]
+    # Alertmanager does not expand environment variables in its own config, so
+    # the config is a template and this renders it at start. It also decides
+    # whether anything is routed anywhere at all -- see the script.
+    entrypoint: ["/etc/alertmanager/entrypoint.sh"]
+    environment:
+      # Unset by default and that is the point: with no destination configured,
+      # alerts collect in the UI at :9093 and nothing leaves this machine.
+      # Set it in .env to deliver. Slack, Teams and Discord all take a URL of
+      # this shape; the value is a credential and never enters the config file.
+      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml.tmpl:/etc/alertmanager/alertmanager.yml.tmpl:ro
+      - ./infra/alertmanager/entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9093/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:13.1.1
+    restart: unless-stopped
+    networks: [local-net]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   migrate:
     build:
@@ -470,6 +543,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Unset by default -- see PCDF_API_KEYS / PCDF_ALLOW_UNAUTHENTICATED in
       # .env.example. With neither set, the console serves only on loopback.
+      ALERTMANAGER_URL: http://alertmanager:9093
       PCDF_API_KEYS: ${PCDF_API_KEYS:-}
       PCDF_ALLOW_UNAUTHENTICATED: ${PCDF_ALLOW_UNAUTHENTICATED:-}
     volumes:

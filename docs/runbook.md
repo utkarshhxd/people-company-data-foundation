@@ -82,7 +82,13 @@ being replaced underneath it.
 
 ## Loading data
 
-Two ways in. For anything that arrives more than once, prefer the first.
+Three ways in. For anything that arrives more than once, prefer the first.
+
+**A browser**, for a one-off or a handful of files:
+`http://localhost:8000/admin/page`, Intake tab. Drop as many files as you like;
+they queue and load one at a time, in order, and the queue survives a console
+restart. Cancel one that has not started, or queue a failed one again without
+re-uploading it. See [the dashboard guide](guides/dashboard.md#intake).
 
 **A watched feed** — write the arguments once, then drop files:
 
@@ -220,6 +226,70 @@ docker compose run --rm validation `
 
 The reason is required. Whoever finds the pipeline stopped is rarely the person
 who stopped it.
+
+### Ingestion stopped itself
+
+Different from the one above, and worth telling apart at a glance: this one is
+about a *service* being gone, not about the data. The console stops ingestion
+when one of the five stage consumers, the watcher, or the broker has not
+reported for three minutes — so that new work stops entering a system that
+cannot drain it.
+
+The Operations tab on `http://localhost:8000/admin/page` says which one, and so
+does:
+
+```powershell
+curl.exe -s http://localhost:8000/control/supervisor
+```
+
+Nothing was discarded. Records in flight finished and committed, backlogs are
+waiting in their topics, files sit untouched in their feed directories, and
+files dropped through the console show as `held` on the Intake tab rather than
+failed.
+
+Find the service and bring it back:
+
+```powershell
+docker compose ps
+docker compose logs --tail 100 resolution
+docker compose up -d resolution
+```
+
+Ingestion starts again on its own once everything has been back for three
+consecutive checks — about a minute and a half. To not wait:
+
+```powershell
+curl.exe -s -X POST http://localhost:8000/control/supervisor/check
+```
+
+It will **not** start a stage that a person stopped, or one that validation
+stopped itself. If ingestion is still paused after the service is back, read
+who stopped it:
+
+```powershell
+docker compose run --rm validation validation-control status
+```
+
+`changed_by = supervisor` is this; anything else is a decision somebody made,
+and starting it again is theirs to do.
+
+To take the automatic behaviour away entirely, set `SUPERVISOR_ENABLED=false`;
+to keep the stopping but require a person to start it again,
+`SUPERVISOR_AUTO_RESUME=false`.
+
+### What did the services actually say?
+
+The Activity tab on `/admin/page` carries WARNING and above from every service,
+newest first, filterable to errors only. It is a convenience, not the record:
+each container's stdout is still complete, and the database keeps a capped tail.
+
+```powershell
+curl.exe -s "http://localhost:8000/control/activity?level=error&limit=50"
+curl.exe -s "http://localhost:8000/control/logs?service=resolution-consumer"
+```
+
+If a service is missing from it entirely, it is either not running or has
+`LOG_TO_DATABASE` unset — the CLI entry points do, deliberately.
 
 ### A whole batch quarantined and it wasn't supposed to
 

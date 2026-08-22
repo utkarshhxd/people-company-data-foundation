@@ -22,10 +22,12 @@ docker compose up -d
 open http://localhost:8000/dashboard/page
 ```
 
-Want both in one page — pipeline progress and the four review queues,
-tabbed — open `http://localhost:8000/admin/page` instead. It's the same
-data and the same decision endpoints; this page and `/review/page` still
-work on their own too.
+Want everything in one page — loading files, pipeline progress, the four
+review queues, operations and the activity log, tabbed — open
+`http://localhost:8000/admin/page` instead. It's the same data and the same
+decision endpoints; this page and `/review/page` still work on their own too.
+Number keys 1&ndash;9 switch tabs, `[` and `]` step through them, `r` reloads
+the one you are on.
 
 This page only reads. Nothing here can change a record's state; use the
 [review console](review-console.md) or the stage CLIs for that.
@@ -53,9 +55,40 @@ its records, plus whatever failed outright (`record_error`, distinct from
 quarantine — see [operations](operations.md)) and whatever schema mapping
 question that batch's column layout first raised.
 
+## Intake
+
+The second tab on `/admin/page`. Drop as many files as you like at once: they
+are written to disk, queued, and loaded **one at a time in the order they
+arrived**, so a ten-file drop is a queue rather than ten loads competing for the
+same tables.
+
+The settings apply to every file in the drop, on purpose — entity type, source
+name and reliability are properties of the *feed*, not of the file, and
+re-typing them per file is how one vendor's data ends up loaded under two source
+names at two reliabilities. (One exception: a sheet name only applies to a
+single-file drop, since it cannot mean anything sensible across several
+workbooks.)
+
+The queue below shows what is waiting, what is loading, and what became of
+everything else. A waiting file can be cancelled; a finished one can be queued
+again without re-uploading it, which is most of what this is for — a load that
+failed because a source name was wrong should be one click, not another upload.
+
+Three things worth knowing:
+
+* The queue is a **table**, not a browser session. Everyone sees the same one,
+  and it survives a console restart. A file whose worker died is picked up
+  again rather than sitting there with nothing loading it.
+* **`held` is not `failed`.** When ingestion is stopped, waiting files are held,
+  with the reason attached. They start moving again on their own when it does.
+* Ingestion refuses the **same bytes twice** under the same source, whatever the
+  file is called — so a re-drop of a file already loaded fails with a message
+  saying which batch it was, rather than doubling the data. `--allow-reingest`,
+  or the checkbox under Advanced, overrides that deliberately.
+
 ## Operations
 
-The seventh tab on `/admin/page`, and the only one that changes anything about
+The eighth tab on `/admin/page`, and the only one that changes anything about
 the pipeline rather than about a record.
 
 **Stop and start.** Every stage, with its state and, if it is stopped, why and
@@ -65,6 +98,21 @@ whatever is mid-record finishes and is recorded, queued work waits in its Kafka
 topic, and files stay in their feed directories — what stops is anything new
 starting. Validation also stops itself when almost everything coming through it
 is invalid; see [the runbook](../runbook.md#validation-stopped-itself).
+
+**Automatic stop.** Whether anything is watching for a service going away, and
+what it last saw. If a consumer, the watcher or the broker stops reporting for
+three minutes, ingestion is stopped automatically: new files are held rather
+than loaded, and nothing already in the system is discarded — records in flight
+finish and commit, and backlogs wait in their topics. It starts again on its own
+once everything has been back for three consecutive checks.
+
+This is the **only** stop that clears itself. A stage stopped by a person, or by
+validation stopping itself, is never touched — those are judgements about the
+data and need somebody to decide the reason is gone; this is a reflex to a
+process not being there, and the same observation says when it is over. Set
+`SUPERVISOR_AUTO_RESUME=false` to require a person either way, or
+`SUPERVISOR_ENABLED=false` to switch it off entirely. Every automatic stop and
+start is in the history with the evidence that caused it.
 
 **Services.** How long ago each long-running process last completed a loop. A
 container being up is not the same as its loop turning: a consumer blocked on a
@@ -87,10 +135,27 @@ the pass. They read every table, which is why they run when asked rather than on
 every render.
 
 Everything here is also available as JSON — `GET /control/health`,
-`GET /alerts`, `POST /control/integrity`, and `POST /control/{stage}/pause`
-and `/resume` — and as the same functions the `validation-control` CLI calls,
-so a stage stopped from a browser and one stopped from a terminal are one code
-path.
+`GET /control/supervisor`, `GET /alerts`, `POST /control/integrity`,
+`POST /control/supervisor/check`, and `POST /control/{stage}/pause` and
+`/resume` — and as the same functions the `validation-control` CLI calls, so a
+stage stopped from a browser and one stopped from a terminal are one code path.
+
+## Activity
+
+The ninth tab: what happened, newest first, filterable by severity and by kind.
+It reads four things the database already records — files loaded and failed,
+the intake queue, every stop and start with its reason, and rows that threw
+part-way — plus a bounded tail of what the services themselves logged at
+WARNING and above.
+
+That last part is a convenience, not a replacement: each container's stdout is
+still the complete record, and a service that cannot write here carries on
+unaffected. What is kept in the database is capped, and dropped rather than
+queued if Postgres cannot keep up — with the number dropped written as a row of
+its own, so a gap in the log says it is a gap instead of reading as a quiet
+period. Turn it off per service with `LOG_TO_DATABASE=false`.
+
+Also JSON: `GET /control/activity` and `GET /control/logs`.
 
 ## Reading a funnel that doesn't taper evenly
 

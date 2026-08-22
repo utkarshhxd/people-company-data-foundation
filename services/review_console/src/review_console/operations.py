@@ -90,11 +90,36 @@ def _kafka() -> dict[str, Any]:
     }
 
 
+def _queue_summary(conn) -> dict[str, Any]:
+    """How much is waiting to be loaded, and how long the oldest has waited.
+
+    Depth alone hides the failure that matters: three files queued is normal,
+    three that have not moved in a day means nothing is loading them.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT
+                count(*) FILTER (WHERE status IN ('queued', 'held')) AS waiting,
+                count(*) FILTER (WHERE status = 'held') AS held,
+                count(*) FILTER (WHERE status = 'running') AS running,
+                count(*) FILTER (WHERE status = 'failed') AS failed,
+                extract(epoch FROM now() - min(queued_at) FILTER (
+                    WHERE status IN ('queued', 'held')))::float8 AS oldest_wait_seconds
+            FROM ingest_queue
+            """
+        )
+        return cur.fetchone() or {}
+
+
 def snapshot() -> dict[str, Any]:
-    """Control state, liveness and lag, together."""
+    """Control state, liveness, lag and the intake queue, together."""
+    from review_console.supervisor import supervisor
+
     with connect() as conn:
         stages = [state.as_dict() for state in control.all_states(conn)]
         heartbeats = _heartbeats(conn)
+        queue = _queue_summary(conn)
 
     paused = [s for s in stages if s["paused"]]
     kafka = _kafka()
@@ -103,6 +128,8 @@ def snapshot() -> dict[str, Any]:
         "paused": paused,
         "services": heartbeats,
         "kafka": kafka,
+        "queue": queue,
+        "supervisor": supervisor.as_dict(),
         # One line the page can put at the top without re-deriving it, so the
         # two consoles cannot disagree about what counts as healthy.
         "healthy": not paused and kafka.get("reachable", False),

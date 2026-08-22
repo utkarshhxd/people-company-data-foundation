@@ -248,3 +248,51 @@ groups:
             files are sitting in their feed directories. Nothing is moving
             either. Check `validation-control status` for why it stopped, then
             resume it.
+
+      - alert: FilesWaitingToLoad
+        # Age rather than depth, the same as every other queue alert here. A
+        # queue of five is a busy morning; five that have not moved in half an
+        # hour means the worker is not turning -- or ingestion is stopped and
+        # nobody has been told.
+        expr: pcdf_oldest_waiting_file_age_seconds > 1800
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "A file has been waiting {{ $value | humanizeDuration }} to be loaded"
+          description: >-
+            Nothing is lost -- the files are on disk and their rows are in
+            ingest_queue. Either the console's queue worker has stopped, or
+            ingestion is paused, in which case the files show as 'held' with
+            the reason attached. The Operations and Intake tabs of
+            /admin/page show both.
+
+      - alert: IngestionStoppedAutomatically
+        # Distinguished from StagePaused deliberately: this one nobody chose,
+        # so the useful time window is much shorter. It also means new work is
+        # being refused, which StagePaused on a downstream stage does not.
+        expr: pcdf_stage_paused{stage="ingestion",changed_by="supervisor"} == 1
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Ingestion stopped itself: a service it depends on is not responding"
+          description: >-
+            The console stopped ingestion because a consumer, the watcher or
+            the broker stopped reporting. New files are held rather than
+            loaded, and nothing already in the system was discarded. It starts
+            again on its own once everything has been back for three
+            consecutive checks; if it has not, the service has not come back.
+            /admin/page, Operations, says which one.
+
+      - alert: ServicesAreComplaining
+        # A service that has started warning is worth knowing about before
+        # anybody reads what it said. Deliberately not per-message: the shape
+        # that matters is a rate appearing where there was none.
+        expr: sum by (service) (pcdf_service_log_entries{level=~"ERROR|CRITICAL"}) > 10
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} has logged {{ $value }} errors in the last hour"
+          description: >-
+            Read them on /admin/page, Activity, filtered to errors. The full
+            output is still in the container's own log; what is kept in the
+            database is WARNING and above.

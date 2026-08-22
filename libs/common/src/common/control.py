@@ -1,16 +1,26 @@
 """Stop a stage, and start it again, in a way that survives a restart.
 
-Two callers put a stage into `paused`, and they mean different things:
+Three callers put a stage into `paused`, and they mean different things:
 
   * **a person**, because something looks wrong and they want the pipeline to
     stop moving while they find out;
   * **the stage itself**, because what it is seeing does not look like data it
-    should keep processing -- see `validation.breaker`.
+    should keep processing -- see `validation.breaker`;
+  * **the supervisor**, because a service that would process the work has
+    stopped reporting -- see `review_console.supervisor`.
 
-Both write the same row, and both are undone the same way: somebody decides it
-is fine and resumes it. Nothing resumes on its own. An automatic pause that
-cleared itself after a while would be a pause that is only ever observed by
-whoever happened to be watching, which is the opposite of the point.
+All three write the same row. The first two are undone only by somebody
+deciding it is fine and resuming. Neither clears itself: an automatic pause
+that timed out would be a pause only ever observed by whoever happened to be
+watching, which is the opposite of the point. Both are judgements -- about what
+somebody saw, or about what the data looks like -- and a judgement needs
+somebody to decide the reason is gone.
+
+The third is not a judgement. It is a reflex to an observable fact, a process
+is not beating, and the same observation says when it is over -- so the
+supervisor undoes its own pause once the service has been back for several
+consecutive checks. It will never undo one of the other two: `changed_by` is
+what tells them apart, and it is checked before anything automatic acts.
 
 **Pausing never discards work.** A paused stage stops *starting* work; whatever
 was in flight finishes and is recorded. For the consumers this is close to
@@ -45,9 +55,16 @@ class StagePaused(Exception):
     """
 
     def __init__(self, state: "ControlState") -> None:
+        # `changed_at` is NOT NULL on a real row, so the guard below is not
+        # about data -- it is about this being an error path. An exception that
+        # raises while describing why something stopped replaces a clear
+        # message with a confusing one, at the exact moment somebody needs the
+        # clear one.
+        when = (f" at {state.changed_at:%Y-%m-%d %H:%M:%SZ}"
+                if state.changed_at is not None else "")
         super().__init__(
             f"{state.stage} is paused: {state.reason or 'no reason recorded'} "
-            f"(by {state.changed_by} at {state.changed_at:%Y-%m-%d %H:%M:%SZ})"
+            f"(by {state.changed_by}{when})"
         )
         self.state = state
 

@@ -266,6 +266,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
       AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
@@ -322,6 +327,11 @@ services:
       PCDF_HEARTBEAT: /tmp/pcdf-mapping-consumer-heartbeat
       PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
       AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
@@ -360,6 +370,11 @@ services:
       PCDF_HEARTBEAT: /tmp/pcdf-normalization-consumer-heartbeat
       PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -396,6 +411,11 @@ services:
       PCDF_HEARTBEAT: /tmp/pcdf-validation-consumer-heartbeat
       PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -432,6 +452,11 @@ services:
       PCDF_HEARTBEAT: /tmp/pcdf-resolution-consumer-heartbeat
       PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -467,6 +492,11 @@ services:
       PCDF_HEARTBEAT: /tmp/pcdf-golden-consumer-heartbeat
       PCDF_STALE_AFTER: ${PCDF_CONSUMER_STALE_AFTER:-900}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -541,6 +571,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # WARNING and above is copied into `service_log` as well as stdout, so
+      # the console's Activity tab can show what this service said without
+      # host access to eleven containers' logs. Dropped rather than blocking
+      # if Postgres cannot keep up; see libs/common/src/common/dblog.py.
+      LOG_TO_DATABASE: "true"
       # Unset by default -- see PCDF_API_KEYS / PCDF_ALLOW_UNAUTHENTICATED in
       # .env.example. With neither set, the console serves only on loopback.
       ALERTMANAGER_URL: http://alertmanager:9093

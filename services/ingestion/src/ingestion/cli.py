@@ -2,6 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from common import control
 from common.logging import configure
 
 from ingestion.pipeline import ReingestBlocked, ingest
@@ -81,6 +82,19 @@ def main(argv: list[str] | None = None) -> int:
             describes=args.describes,
             sheet=args.sheet,
         )
+    except control.StagePaused as exc:
+        # Expected, not exceptional: somebody stopped intake on purpose, or the
+        # console stopped it because a service that would process the work has
+        # gone away. A traceback here would read as a crash, and the file is
+        # untouched either way.
+        print(f"not loaded: {exc}", file=sys.stderr)
+        print(
+            "The file has not been touched. See why on the Operations tab of "
+            "the console, or with `validation-control status` under "
+            "`docker compose run --rm validation`.",
+            file=sys.stderr,
+        )
+        return 6
     except ReingestBlocked as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3

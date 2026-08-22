@@ -9,7 +9,7 @@ from fastapi import FastAPI, Response
 from prometheus_client import REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from review_console import pipeline_metrics, stream
+from review_console import ingest_queue, pipeline_metrics, stream, supervisor
 from review_console.alerts_router import router as alerts_router
 from review_console.auth import describe_configuration
 from review_console.router import (
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Say how authentication is configured, every start; run the dashboard's
-    push poller for exactly as long as the app is up.
+    """Say how authentication is configured, every start; run the background
+    loops for exactly as long as the app is up.
 
     A console serving personal data without credentials should never be
     something anyone has to infer from a config file.
@@ -38,9 +38,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     configure("review_console")
     logger.warning("%s", describe_configuration())
     stream.start()
+    # The queue worker and the supervisor are threads, not containers, because
+    # both are single-instance by nature and this is the one long-running
+    # process in the stack. Started here so they live exactly as long as the
+    # app: no worker outliving the thing that can report on it.
+    ingest_queue.worker.start()
+    supervisor.supervisor.start()
     try:
         yield
     finally:
+        supervisor.supervisor.stop()
+        ingest_queue.worker.stop()
         await stream.stop()
 
 

@@ -442,3 +442,83 @@ def test_the_record_at_a_time_path_never_starts_the_consumer_chain():
         f"the record-at-a-time path publishes {topics}; only the per-record "
         "event belongs here"
     )
+
+
+# --------------------------------------------------------------------------
+# stopping
+# --------------------------------------------------------------------------
+
+
+def _control_says(monkeypatch, paused: dict[str, str]):
+    """Stand in for pipeline_control without a database."""
+    from common import control
+
+    def get(conn, stage):
+        reason = paused.get(stage)
+        return control.ControlState(
+            stage, control.PAUSED if reason else control.RUNNING,
+            reason, "ada", {}, None,
+        )
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(watch, "connect", lambda *a, **k: Conn())
+    monkeypatch.setattr(control, "get", get)
+
+
+def test_the_watcher_stops_when_ingestion_is_stopped(root, loaded, monkeypatch):
+    """The supervisor stops `ingestion` when a service that would process the
+    work has gone away. The watcher is the main automated way in, so it has to
+    be one of the things that stops -- otherwise files keep being loaded into a
+    pipeline with nobody at the other end, which is the pile this exists to
+    prevent."""
+    make_feed(root, "vendor_x")
+    (root / "vendor_x" / "people.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    _control_says(monkeypatch, {"ingestion": "resolution-consumer is not responding"})
+
+    watcher = Watcher(root, poll_seconds=0)
+    watcher.sweep()
+    assert watcher.sweep() == []
+    assert loaded == []
+    # Left exactly where it was: a pause is not a rejection.
+    assert (root / "vendor_x" / "people.csv").is_file()
+
+
+def test_the_watcher_still_stops_when_validation_stops_itself(root, loaded, monkeypatch):
+    make_feed(root, "vendor_x")
+    (root / "vendor_x" / "people.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    _control_says(monkeypatch, {"validation": "98% of records came back invalid"})
+
+    watcher = Watcher(root, poll_seconds=0)
+    watcher.sweep()
+    assert watcher.sweep() == []
+    assert loaded == []
+
+
+def test_the_reason_names_which_stage_stopped_it(root, monkeypatch):
+    """Two stages stop a load for opposite reasons -- a missing service, and
+    data that does not look like data. Saying only "paused" would send the
+    investigation to the wrong place."""
+    _control_says(monkeypatch, {"ingestion": "the broker is unreachable"})
+    assert "ingestion is paused" in Watcher(root, poll_seconds=0)._paused()
+
+    _control_says(monkeypatch, {"validation": "98% invalid"})
+    assert "validation is paused" in Watcher(root, poll_seconds=0)._paused()
+
+    _control_says(monkeypatch, {})
+    assert Watcher(root, poll_seconds=0)._paused() is None
+
+
+def test_an_unreachable_database_is_not_treated_as_a_pause(root, monkeypatch):
+    """Stopping for that reason would hide the real one, and the load fails and
+    is recorded on its own anyway."""
+    def explode(*args, **kwargs):
+        raise RuntimeError("could not connect to postgres")
+
+    monkeypatch.setattr(watch, "connect", explode)
+    assert Watcher(root, poll_seconds=0)._paused() is None

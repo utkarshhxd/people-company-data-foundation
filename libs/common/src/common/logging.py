@@ -48,11 +48,18 @@ def resolve_level(level: str | None = None) -> int:
     return resolved
 
 
-def configure(service: str, level: str | None = None) -> None:
+def configure(
+    service: str, level: str | None = None, to_database: bool | None = None
+) -> None:
     """Set up root logging for one process. Safe to call more than once.
 
     `force=True` because uvicorn may have installed handlers first, and two
     sets of handlers on the root logger means every line printed twice.
+
+    `to_database` additionally copies WARNING and above into `service_log`, so
+    the console can show what the services said without host access to eleven
+    containers' stdout. Off unless asked for, and never load-bearing: see
+    `common.dblog` for why it drops rather than blocks.
     """
     logging.basicConfig(
         level=resolve_level(level),
@@ -72,6 +79,12 @@ def configure(service: str, level: str | None = None) -> None:
     # makes, and only when the operator has not named it explicitly.
     if "APPLICATION_NAME" not in os.environ:
         settings.application_name = f"pcdf-{service}"
+
+    wanted = settings.log_to_database if to_database is None else to_database
+    if wanted:
+        from common import dblog
+
+        dblog.install(service, max_rows=settings.log_database_max_rows)
 
     logging.getLogger(service).debug(
         "logging configured at %s", logging.getLevelName(resolve_level(level))

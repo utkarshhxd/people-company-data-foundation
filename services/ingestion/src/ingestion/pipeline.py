@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from common import events
+from common import control, events
 from common.db import connect
 from common.kafka import EventProducer, ensure_topics
 
@@ -66,6 +66,12 @@ def ingest(
     size = path.stat().st_size
 
     with connect() as conn:
+        # Before the batch row exists, and before the source is touched.
+        # Starting a batch that immediately stops would leave a `running` batch
+        # nobody asked for, and the duplicate guard would then block re-loading
+        # the file once it is started again.
+        control.guard(conn, "ingestion")
+
         source_id = repository.get_or_create_source(
             conn, source_name, source_type, reliability, describes
         )

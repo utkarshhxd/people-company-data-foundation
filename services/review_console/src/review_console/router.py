@@ -12,21 +12,25 @@ event loop or need a second set of queries that could disagree with the first.
 """
 
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
-from ingestion.readers import DEFAULT_BATCH_SIZE
+from ingestion.readers import CSV_SUFFIXES, DEFAULT_BATCH_SIZE
 from pydantic import BaseModel, Field
 
 from review_console import (
+    activity,
     control,
     decisions,
     entities,
+    ingest_queue,
     operations,
     pipeline,
     review,
     stages,
     stream,
+    supervisor,
     uploads,
 )
 from review_console.admin_page import ADMIN_PAGE
@@ -95,6 +99,12 @@ class EnrichmentDecision(BaseModel):
 
     accept: bool
     reviewed_by: str = Field(min_length=1)
+
+
+class ActorRequest(BaseModel):
+    """Who is doing this. The only thing some actions need beyond their target."""
+
+    reviewed_by: str = Field(min_length=1, description="Who acted. Recorded.")
 
 
 def _decided(call) -> dict[str, Any]:
@@ -323,7 +333,7 @@ def get_dashboard_batch(batch_id: str) -> dict:
 
 @dashboard_router.post("/ingest")
 def ingest_upload(
-    file: Annotated[UploadFile, File()],
+    files: Annotated[list[UploadFile], File()],
     entity_type: Annotated[str, Form(pattern="^(person|company)$")],
     source_name: Annotated[str, Form(min_length=1)],
     source_type: Annotated[str | None, Form(pattern="^(csv|excel)$")] = None,
@@ -333,37 +343,96 @@ def ingest_upload(
     batch_size: Annotated[int, Form(ge=1)] = DEFAULT_BATCH_SIZE,
     allow_reingest: Annotated[bool, Form()] = False,
     sheet: Annotated[str | None, Form()] = None,
+    queued_by: Annotated[str, Form(min_length=1)] = "console",
 ) -> dict:
-    """Save the dropped file and start ingesting it; poll /ingest/{upload_id}.
+    """Save the dropped files and put them in the queue; watch /dashboard/queue.
 
-    Runs in a background thread, same reasoning as stage runs: a 10-million-row
-    file takes far longer than an HTTP request should stay open for.
+    Many files, one set of arguments, on purpose. Entity type, source name and
+    reliability are properties of the *feed*, not of the file -- the same
+    reasoning `record_pipeline.watch` moves them onto a feed directory for.
+    Re-typing them per file is how one vendor's data ends up loaded under two
+    source names at two reliabilities.
+
+    Nothing is ingested inside this request. The files are written to disk, a
+    row per file is written to `ingest_queue`, and one worker takes them one at
+    a time -- so ten files is a queue, not ten concurrent loads.
     """
-    try:
-        state = uploads.start(
-            file.file,
-            file.filename or "upload",
+    if not files:
+        raise HTTPException(status_code=422, detail="no files were uploaded")
+
+    queued: list[dict] = []
+    for file in files:
+        name = file.filename or "upload"
+        try:
+            path, size = uploads.store(file.file, name, uuid4().hex[:12])
+        except uploads.UploadTooLarge as exc:
+            # Whatever was already queued stays queued: those files are on disk
+            # and their rows are written, and throwing them away because a
+            # later file in the same drop was too big would be worse than
+            # saying which one failed.
+            raise HTTPException(
+                status_code=413,
+                detail=f"{name}: {exc} ({len(queued)} earlier file(s) were queued)",
+            ) from exc
+        queued.append(ingest_queue.enqueue(
+            file_name=name,
+            stored_path=path,
+            size_bytes=size,
             entity_type=entity_type,
             source_name=source_name,
-            source_type=source_type,
+            source_type=source_type or (
+                "csv" if path.suffix.lower() in CSV_SUFFIXES else "excel"
+            ),
             record_id_column=record_id_column or None,
             reliability=reliability,
             describes=describes,
             batch_size=batch_size,
             allow_reingest=allow_reingest,
-            sheet=sheet or None,
-        )
-    except uploads.UploadTooLarge as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    return {"upload_id": state.upload_id, "status": state.status}
+            # One sheet name cannot mean anything sensible across several
+            # workbooks, so it only applies to a single-file drop.
+            sheet=(sheet or None) if len(files) == 1 else None,
+            queued_by=queued_by,
+        ))
+
+    return {"queued": len(queued), "items": queued}
 
 
-@dashboard_router.get("/ingest/{upload_id}")
-def get_ingest_status(upload_id: str) -> dict:
-    state = uploads.status(upload_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail=f"no upload {upload_id}")
-    return state
+@dashboard_router.get("/queue")
+def get_queue(
+    status: Annotated[
+        str | None,
+        Query(pattern="^(queued|held|running|completed|failed|cancelled)$"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> dict:
+    """What is waiting to be loaded, what is loading, and what became of it."""
+    return ingest_queue.listing(status, limit)
+
+
+@dashboard_router.get("/queue/{queue_id}")
+def get_queue_item(queue_id: str) -> dict:
+    item = ingest_queue.get(queue_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"no queue item {queue_id}")
+    return item
+
+
+@dashboard_router.post("/queue/{queue_id}/cancel")
+def cancel_queue_item(queue_id: str, body: Annotated[ActorRequest, Body()]) -> dict:
+    """Drop a file that has not started. A running load is not cancelled here."""
+    try:
+        return ingest_queue.cancel(queue_id, body.reviewed_by)
+    except ingest_queue.NotWaiting as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@dashboard_router.post("/queue/{queue_id}/requeue")
+def requeue_queue_item(queue_id: str, body: Annotated[ActorRequest, Body()]) -> dict:
+    """Try a finished item again. The file is already on disk."""
+    try:
+        return ingest_queue.requeue(queue_id, body.reviewed_by)
+    except ingest_queue.NotWaiting as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @dashboard_router.post("/batches/{batch_id}/stages/{stage}/run")
@@ -535,6 +604,49 @@ def get_operations_health() -> dict:
     Postgres is down.
     """
     return operations.snapshot()
+
+
+@control_router.get("/activity")
+def get_activity(
+    kind: Annotated[str | None, Query(pattern="^(service|control|load|queue|record)$")] = None,
+    level: Annotated[str | None, Query(pattern="^(error|warn|info)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    """What happened, newest first: loads, stops, failed rows, service warnings.
+
+    `level` is a floor rather than an equality -- asking for warnings gets
+    errors too, because nobody looking for what went wrong wants the worst of
+    it filtered out.
+    """
+    return activity.feed(kind, level, limit)
+
+
+@control_router.get("/logs")
+def get_service_log(
+    service: Annotated[str | None, Query(max_length=64)] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict:
+    """Just what the services said. WARNING and above; stdout is still complete."""
+    return activity.service_log(service, limit=limit)
+
+
+@control_router.get("/supervisor")
+def get_supervisor() -> dict:
+    """Whether anything is watching for a service going away, and what it saw."""
+    return supervisor.supervisor.as_dict()
+
+
+@control_router.post("/supervisor/check")
+def run_supervisor_check() -> dict:
+    """Look now rather than at the next interval, and act on what is found.
+
+    The same pass the loop runs, so this cannot drift from it. Useful after
+    starting a service back up, when waiting thirty seconds to find out whether
+    it counted is thirty seconds of not knowing.
+    """
+    health = supervisor.supervisor.once()
+    return {"checked": True, "ok": health.ok, "reason": health.reason(),
+            "supervisor": supervisor.supervisor.as_dict()}
 
 
 @control_router.post("/integrity")

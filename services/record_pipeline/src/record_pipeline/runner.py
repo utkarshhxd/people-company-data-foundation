@@ -117,6 +117,13 @@ def run_file(
         # Before the batch row exists. Starting a batch that immediately stops
         # would leave a `running` batch nobody asked for, and the duplicate
         # guard would then block re-loading the file once the pause is lifted.
+        #
+        # Both stages, because they stop this for different reasons and either
+        # is sufficient. `ingestion` means no new work should enter the system
+        # at all -- a person's decision, or the console's when a service it
+        # depends on has gone away. `validation` means the records coming back
+        # do not look like data, which is the breaker.
+        control.guard(conn, "ingestion")
         control.guard(conn, "validation")
 
         source_id = ingest_repo.get_or_create_source(

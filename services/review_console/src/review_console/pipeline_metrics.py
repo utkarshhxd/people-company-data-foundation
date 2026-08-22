@@ -259,6 +259,43 @@ SPECS: tuple[MetricSpec, ...] = (
         FROM service_heartbeat
         """,
     ),
+
+    # --- intake queue ----------------------------------------------------
+    # Depth and age, for the same reason every other queue here reports both:
+    # three files waiting is normal, three that have not moved since yesterday
+    # means nothing is loading them. `held` is broken out because it has a
+    # cause -- ingestion is stopped -- that the depth alone does not carry.
+    MetricSpec(
+        "pcdf_ingest_queue_items",
+        "Files dropped through the console, by what became of them.",
+        ("status",),
+        "SELECT status, count(*) FROM ingest_queue GROUP BY 1",
+    ),
+    MetricSpec(
+        "pcdf_oldest_waiting_file_age_seconds",
+        "How long the oldest file still waiting to be loaded has waited.",
+        (),
+        """
+        SELECT coalesce(extract(epoch FROM now() - min(queued_at)), 0)
+        FROM ingest_queue WHERE status IN ('queued', 'held')
+        """,
+    ),
+
+    # --- what the services said ------------------------------------------
+    # The rate of complaint, not the complaints themselves: a service that has
+    # started warning about something is worth a graph even before anybody
+    # reads what it said.
+    MetricSpec(
+        "pcdf_service_log_entries",
+        "Warnings and errors recorded in the last hour, by service and level.",
+        ("service", "level"),
+        """
+        SELECT service, level, count(*)
+        FROM service_log
+        WHERE created_at > now() - interval '1 hour'
+        GROUP BY 1, 2
+        """,
+    ),
 )
 
 
@@ -340,6 +377,25 @@ class PipelineCollector:
 KAFKA_TIMEOUT_SECONDS = 5.0
 
 _kafka_cache = _Cache()
+
+
+def broker_reachable() -> tuple[bool, str | None]:
+    """Can we get cluster metadata, and if not, what did it say.
+
+    Deliberately lighter than reading lag: this is asked every supervisor pass
+    and only needs to distinguish "the broker is there" from "it is not".
+    Returns the error text rather than logging it, because the caller puts it
+    in the reason a stage was stopped, where somebody will actually read it.
+    """
+    try:
+        from confluent_kafka.admin import AdminClient
+
+        AdminClient(
+            {"bootstrap.servers": settings.kafka_bootstrap_servers}
+        ).list_topics(timeout=KAFKA_TIMEOUT_SECONDS)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _consumer_lag() -> list[tuple[str, str, int, float]]:

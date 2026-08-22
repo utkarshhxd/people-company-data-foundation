@@ -322,19 +322,30 @@ class Watcher:
     def _paused(self) -> str | None:
         """Why the pipeline is stopped, or None if it is running.
 
+        Two stages are asked about, because either one stops a load and they
+        mean different things. `ingestion` is "no new work should enter the
+        system" -- a person's decision, or the console's when a service that
+        would process the work has gone away. `validation` is the breaker:
+        what is coming back does not look like data.
+
         A database that cannot be reached is not a pause. Saying so would stop
         the watcher for the wrong reason and hide the real one; the load will
         fail on its own and be recorded, which is the honest outcome.
         """
         try:
             with connect() as conn:
-                state = control.get(conn, "validation")
+                states = [control.get(conn, stage)
+                          for stage in ("ingestion", "validation")]
         except Exception as exc:
             logger.warning("could not read pipeline control: %s", exc)
             return None
-        if not state.paused:
+        stopped = [s for s in states if s.paused]
+        if not stopped:
             return None
-        return f"validation is paused — {state.reason or 'no reason recorded'}"
+        return "; ".join(
+            f"{s.stage} is paused — {s.reason or 'no reason recorded'}"
+            for s in stopped
+        )
 
     def _beat(self) -> None:
         """Record that a sweep, or one file within it, completed.

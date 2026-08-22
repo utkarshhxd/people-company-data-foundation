@@ -72,6 +72,34 @@ class Settings(BaseSettings):
 
     log_level: str = "info"
 
+    # Copy WARNING and above into `service_log` as well as stdout, so the
+    # console can show what the services said. Off by default: a CLI run has no
+    # console watching it, and a short-lived process paying for a writer thread
+    # and a connection to log two lines is a bad trade. The long-running
+    # services turn it on in docker-compose.yml.
+    log_to_database: bool = False
+    log_database_max_rows: int = 20_000
+
+    # Stop taking new work in when the things that would process it are not
+    # there. Liveness is the age of a heartbeat, not the existence of a
+    # container: a consumer wedged on a broker that accepts connections and
+    # never delivers keeps its container up and does nothing.
+    #
+    # Three minutes because the consumers beat about once a second and the
+    # watcher once a sweep -- a service quiet for three minutes has stopped
+    # turning its loop, not had a slow moment.
+    supervisor_enabled: bool = True
+    supervisor_interval_seconds: float = 30.0
+    supervisor_stale_after_seconds: float = 180.0
+    # An automatic stop reverses itself once the dependency is back and has
+    # stayed back. Deliberately unlike the validation breaker and unlike a
+    # person's pause, neither of which ever clear themselves: those are
+    # judgements about the data and need a human, this is a reflex about a
+    # missing process and is re-checkable. Set false to require a human either
+    # way.
+    supervisor_auto_resume: bool = True
+    supervisor_healthy_checks_before_resume: int = 3
+
     # Kafka is a notification layer, never the source of truth: events carry
     # references to committed rows, and a consumer reads the values back out of
     # Postgres. See common.events.

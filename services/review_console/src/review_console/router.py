@@ -22,6 +22,7 @@ from review_console import (
     control,
     decisions,
     entities,
+    operations,
     pipeline,
     review,
     stages,
@@ -523,3 +524,27 @@ def resume_stage(
 ) -> dict:
     """Start a stage again. Backlogs drain on their own from here."""
     return control.resume(stage, body.reviewed_by, body.note)
+
+
+@control_router.get("/health")
+def get_operations_health() -> dict:
+    """Control state, service liveness and consumer lag, read together.
+
+    One call because they are judged together: lag means something different
+    when a stage is paused, and a silent watcher means something different when
+    Postgres is down.
+    """
+    return operations.snapshot()
+
+
+@control_router.post("/integrity")
+def run_integrity_checks() -> dict:
+    """Run the twelve reconciliation checks in tools/sql/verify.sql.
+
+    A POST rather than a GET because it is a dozen aggregate queries over every
+    table, which is not something a page should fire on every render.
+    """
+    try:
+        return operations.integrity()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

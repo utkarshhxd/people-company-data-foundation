@@ -166,6 +166,8 @@ ADMIN_PAGE = """<!doctype html>
       Quarantined records <span class="n" id="n-quarantine">–</span></button>
     <button class="tab" role="tab" data-tab="enrichment">
       AI enrichment proposals <span class="n" id="n-enrichment">–</span></button>
+    <button class="tab" role="tab" data-tab="operations">
+      Operations <span class="n" id="n-operations">–</span></button>
   </div>
 
   <section id="pipelinePanel">
@@ -179,7 +181,7 @@ ADMIN_PAGE = """<!doctype html>
       </div>
       <div class="field-row">
         <select id="uploadEntityType">
-          <option value="" disabled selected>type\\u2026</option>
+          <option value="" disabled selected>type&hellip;</option>
           <option value="person">person</option>
           <option value="company">company</option>
         </select>
@@ -232,13 +234,58 @@ ADMIN_PAGE = """<!doctype html>
         <option value="company">company</option>
       </select>
       <input type="text" id="entitySearchQuery"
-        placeholder="name, email, domain, vendor id\\u2026" style="flex:1">
+        placeholder="name, email, domain, vendor id&hellip;" style="flex:1">
       <button id="entitySearchGo" class="primary">Search</button>
     </div>
     <div id="entityResults"></div>
     <div id="entityDetailWrap" class="hide">
       <h2 id="entityDetailTitle">Entity</h2>
       <div id="entityDetail"></div>
+    </div>
+  </section>
+
+  <section id="operationsPanel" class="hide">
+    <div id="opsBanner"></div>
+
+    <h2>Stop and start the pipeline</h2>
+    <p class="dim" style="margin:0 0 10px">
+      Pausing a stage never discards anything. Whatever is mid-record finishes
+      and is recorded, queued work waits in its Kafka topic, and files stay in
+      their feed directories &mdash; what stops is anything new starting.
+      Validation also stops itself when almost everything coming through it is
+      invalid.
+    </p>
+    <div class="card">
+      <div id="stages"><p class="dim">Loading&hellip;</p></div>
+    </div>
+
+    <h2>Services</h2>
+    <p class="dim" style="margin:0 0 10px">
+      A container being up is not the same as its loop turning. Each of these
+      records a heartbeat as it works; what is shown is how long ago.
+    </p>
+    <div class="card"><div id="services"><p class="dim">Loading&hellip;</p></div></div>
+
+    <h2>Queued work</h2>
+    <p class="dim" style="margin:0 0 10px">
+      Messages published to a topic that the consumer has not committed yet.
+      Non-zero during a load is normal; non-zero and not falling means a stage
+      is stopped or cannot keep up.
+    </p>
+    <div class="card"><div id="lag"><p class="dim">Loading&hellip;</p></div></div>
+
+    <h2>Alerts</h2>
+    <div class="card"><div id="alerts"><p class="dim">Loading&hellip;</p></div></div>
+
+    <h2>Data integrity</h2>
+    <p class="dim" style="margin:0 0 10px">
+      Twelve reconciliation checks that each return rows only when something is
+      wrong, so all-empty is the pass. They read every table, so they run when
+      asked rather than on every render.
+    </p>
+    <div class="card">
+      <button id="runIntegrity">Run the checks</button>
+      <div id="integrity" style="margin-top:12px"></div>
     </div>
   </section>
 
@@ -976,6 +1023,142 @@ function loadEntity(entityId) {
   });
 }
 
+/* ================= operations ================= */
+
+// Ages are the whole point of this tab: "up" and "working" are different
+// facts, and only the second one is worth looking at.
+function ageTag(seconds, warnAt, badAt) {
+  if (seconds == null) { return '<span class="tag">never</span>'; }
+  var cls = seconds >= badAt ? "bad" : (seconds >= warnAt ? "warn" : "ok");
+  return '<span class="tag ' + cls + '">' + dur(seconds) + " ago</span>";
+}
+
+function renderStages(data) {
+  return '<table><thead><tr><th>Stage</th><th>State</th><th>Why</th>' +
+    "<th></th></tr></thead><tbody>" +
+    data.stages.map(function (s) {
+      var control = s.paused
+        ? '<button data-resume="' + esc(s.stage) + '">Resume</button>'
+        : '<button data-pause="' + esc(s.stage) + '">Pause</button>';
+      return "<tr><td>" + esc(s.stage) + "</td>" +
+        '<td><span class="tag ' + (s.paused ? "bad" : "ok") + '">' +
+          esc(s.state) + "</span></td>" +
+        "<td>" + (s.paused
+          ? esc(s.reason || "no reason recorded") +
+            ' <span class="dim">— by ' + esc(s.changed_by) + "</span>"
+          : '<span class="dim">—</span>') + "</td>" +
+        '<td style="text-align:right">' + control + "</td></tr>";
+    }).join("") + "</tbody></table>";
+}
+
+function renderServices(rows) {
+  if (!rows.length) {
+    return '<p class="dim">Nothing has reported yet. Services record a ' +
+      "heartbeat as they work; an empty table means none of them has run " +
+      "since the last database reset.</p>";
+  }
+  return '<table><thead><tr><th>Service</th><th>Last completed a loop</th>' +
+    "<th>Detail</th></tr></thead><tbody>" +
+    rows.map(function (r) {
+      var detail = Object.keys(r.detail || {}).map(function (k) {
+        return '<span class="chip">' + esc(k) + " = " + esc(r.detail[k]) + "</span>";
+      }).join(" ");
+      // 15 minutes is the consumers' own staleness limit; an hour is well past
+      // anything a slow batch explains.
+      return "<tr><td>" + esc(r.service) + "</td>" +
+        "<td>" + ageTag(r.age_seconds, 900, 3600) + "</td>" +
+        '<td class="chips">' + detail + "</td></tr>";
+    }).join("") + "</tbody></table>";
+}
+
+function renderLag(kafka) {
+  if (!kafka.reachable) {
+    return '<div class="err">Consumer lag cannot be read: ' +
+      esc(kafka.error || "the broker is unreachable") +
+      ". While this is true, no batch is being announced and no stage " +
+      "consumer is advancing.</div>";
+  }
+  if (!kafka.groups.length) {
+    return '<p class="empty">No consumer group has committed an offset yet.</p>';
+  }
+  return '<table><thead><tr><th>Consumer</th><th>Topic</th><th>Waiting</th>' +
+    "</tr></thead><tbody>" +
+    kafka.groups.map(function (g) {
+      return "<tr><td>" + esc(g.group) + "</td>" +
+        '<td class="mono">' + esc(g.topic) + "</td>" +
+        '<td><span class="tag ' + (g.lag > 0 ? "warn" : "ok") + '">' +
+          fmt(g.lag) + " message(s)</span></td></tr>";
+    }).join("") + "</tbody></table>";
+}
+
+function renderAlerts(data) {
+  if (data.unavailable) {
+    // "Nothing is firing" and "we cannot tell whether anything is firing" are
+    // opposite states, and rendering them the same way is worse than an error.
+    return '<div class="err">Alertmanager is unreachable, so it is not known ' +
+      "whether anything is firing: " + esc(data.unavailable) + "</div>";
+  }
+  if (!data.alerts.length) {
+    return '<p class="empty">Nothing is firing.</p>';
+  }
+  return data.alerts.map(function (a) {
+    return '<div class="top" style="padding:8px 0;border-bottom:1px solid var(--line)">' +
+      '<span class="tag ' +
+        (a.severity === "critical" ? "bad" : a.severity === "warning" ? "warn" : "") +
+        '">' + esc(a.severity) + "</span> " +
+      '<span class="name">' + esc(a.name) + "</span> " +
+      '<span class="dim">' + esc(a.summary || "") + "</span></div>";
+  }).join("");
+}
+
+function renderIntegrity(data) {
+  var head = data.ok
+    ? '<p class="empty">All ' + data.total + " checks pass.</p>"
+    : '<div class="err">' + data.failed + " of " + data.total +
+      " checks found something" +
+      (data.errored ? ", and " + data.errored + " could not run" : "") + ".</div>";
+  return head + '<table style="margin-top:10px"><thead><tr><th>Check</th>' +
+    "<th>Result</th></tr></thead><tbody>" +
+    data.checks.map(function (c) {
+      var verdict = c.error
+        ? '<span class="tag bad">could not run</span> <span class="dim">' +
+          esc(c.error) + "</span>"
+        : c.ok
+          ? '<span class="tag ok">pass</span>'
+          : '<span class="tag bad">' + fmt(c.offending) + " row(s)</span>";
+      return "<tr><td>" + esc(c.name) + "</td><td>" + verdict + "</td></tr>";
+    }).join("") + "</tbody></table>";
+}
+
+function loadOperations() {
+  return Promise.all([
+    api("/control/health"),
+    // The alerts endpoint 503s when Alertmanager is unreachable, which is a
+    // real answer rather than a failure of this page -- so it is caught here
+    // and rendered, not allowed to blank the whole tab.
+    api("/alerts").catch(function (err) {
+      return { unavailable: err.message, alerts: [] };
+    }),
+  ]).then(function (out) {
+    var health = out[0];
+    $("stages").innerHTML = renderStages(health);
+    $("services").innerHTML = renderServices(health.services || []);
+    $("lag").innerHTML = renderLag(health.kafka || { reachable: false });
+    $("alerts").innerHTML = renderAlerts(out[1]);
+
+    var paused = health.paused || [];
+    $("n-operations").textContent = paused.length ? String(paused.length) : "0";
+    $("opsBanner").innerHTML = paused.length
+      ? '<div class="err" style="margin-bottom:16px"><strong>' +
+        paused.map(function (s) { return esc(s.stage); }).join(", ") +
+        " is paused.</strong> Nothing is being lost — queued work is waiting " +
+        "and files are sitting in their feeds. Nothing is moving either.</div>"
+      : "";
+  }).catch(function (err) {
+    $("stages").innerHTML = '<div class="err">' + esc(err.message) + "</div>";
+  });
+}
+
 /* ================= tab switching + polling ================= */
 
 function showTab() {
@@ -984,8 +1167,9 @@ function showTab() {
   });
   $("pipelinePanel").classList.toggle("hide", currentTab !== "pipeline");
   $("entitiesPanel").classList.toggle("hide", currentTab !== "entities");
-  $("queuePanel").classList.toggle(
-    "hide", currentTab === "pipeline" || currentTab === "entities");
+  $("operationsPanel").classList.toggle("hide", currentTab !== "operations");
+  $("queuePanel").classList.toggle("hide", currentTab === "pipeline" ||
+    currentTab === "entities" || currentTab === "operations");
 }
 
 function loadCurrent() {
@@ -993,6 +1177,9 @@ function loadCurrent() {
   // it or the entity browser here, only the review queue tabs still poll.
   if (currentTab === "pipeline" || currentTab === "entities") {
     return Promise.resolve();
+  }
+  if (currentTab === "operations") {
+    return loadOperations();
   }
   return loadQueue().catch(function (err) {
     $("queueBody").innerHTML = '<div class="err">' + esc(err.message) + "</div>";
@@ -1009,6 +1196,60 @@ document.addEventListener("click", function (event) {
     currentTab = tab.dataset.tab;
     showTab();
     loadCurrent();
+    return;
+  }
+
+  var pause = event.target.closest("[data-pause]");
+  if (pause) {
+    // Who, before why: who() focuses the name field and returns null when it
+    // is empty, and asking for a reason first would throw the answer away.
+    var pauseBy = who();
+    if (!pauseBy) { return; }
+    // The reason is required, not optional. Whoever finds the pipeline stopped
+    // is rarely the person who stopped it, and "paused" with nothing attached
+    // is indistinguishable from a bug.
+    var why = window.prompt(
+      "Why is " + pause.dataset.pause + " being paused?\\n\\n" +
+      "Nothing will be lost: queued work waits in its topic and files stay in " +
+      "their feed directories.");
+    if (!why) { return; }
+    pause.disabled = true;
+    api("/control/" + pause.dataset.pause + "/pause", {
+      method: "POST",
+      body: JSON.stringify({ reason: why, reviewed_by: pauseBy }),
+    }).then(loadOperations).catch(function (err) {
+      $("stages").innerHTML = '<div class="err">' + esc(err.message) + "</div>";
+    });
+    return;
+  }
+
+  var resume = event.target.closest("[data-resume]");
+  if (resume) {
+    var resumeBy = who();
+    if (!resumeBy) { return; }
+    var note = window.prompt(
+      "Resuming " + resume.dataset.resume + ". What did you find?\\n\\n" +
+      "Recorded against the resume, so the next person can see what this was.");
+    if (note === null) { return; }
+    resume.disabled = true;
+    api("/control/" + resume.dataset.resume + "/resume", {
+      method: "POST",
+      body: JSON.stringify({ reviewed_by: resumeBy, note: note || null }),
+    }).then(loadOperations).catch(function (err) {
+      $("stages").innerHTML = '<div class="err">' + esc(err.message) + "</div>";
+    });
+    return;
+  }
+
+  if (event.target.closest("#runIntegrity")) {
+    var button = $("runIntegrity");
+    button.disabled = true;
+    $("integrity").innerHTML = '<p class="dim">Running twelve checks&hellip;</p>';
+    api("/control/integrity", { method: "POST" }).then(function (data) {
+      $("integrity").innerHTML = renderIntegrity(data);
+    }).catch(function (err) {
+      $("integrity").innerHTML = '<div class="err">' + esc(err.message) + "</div>";
+    }).then(function () { button.disabled = false; });
     return;
   }
 

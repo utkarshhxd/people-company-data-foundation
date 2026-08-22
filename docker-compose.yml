@@ -551,6 +551,10 @@ services:
       # (review_console/src/review_console/uploads.py), same host-visible
       # ./data tree ingestion/pipeline/watcher already read from.
       - ./data:/data
+      # The reconciliation checks the Operations tab runs live in
+      # tools/sql/verify.sql. Read-only, and mounted rather than baked in so
+      # editing a check does not need an image rebuild.
+      - ./tools:/tools:ro
     # `restart: unless-stopped` only restarts a container that *exited*. A
     # process still running but unable to reach Postgres stays "up" forever
     # and keeps serving 503s to anyone who asks. /health/ready already

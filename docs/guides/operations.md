@@ -114,6 +114,7 @@ path inside a container is `/tools/<group>/<script>`.
 | `rebuild_golden.py` | recompute golden values after a rule change |
 | `reblock.py` | report entities that should have merged, and merge them on request |
 | `purge_source.py` | remove a source's data — the only thing here that deletes |
+| `project_serving.py` | copy the golden record onto the application database that displays it |
 | `load_samples.sh` · `load_testfiles.sh` | drive a directory of files through the pipeline, one at a time |
 | `pgadmin-server.json` | pgAdmin server definition, so nobody types connection details |
 
@@ -134,6 +135,10 @@ path inside a container is `/tools/<group>/<script>`.
 | `verify.sql` | twelve reconciliation checks; empty output is the pass |
 | `queries.sql` | ten worked queries |
 | `compare_runs.sql` | diff two batches of the same source |
+
+**`db/serving/`** — not part of `tools/`, but in the same category: run by hand,
+against a database this repository does not own. See
+[Serving an application](serving-projection.md).
 
 ## Credentials
 

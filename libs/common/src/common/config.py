@@ -70,6 +70,21 @@ class Settings(BaseSettings):
     postgres_password: str = "postgres"
     postgres_db: str = "postgres"
 
+    # The serving database: the application that displays this data, on its own
+    # Postgres. Not the same database as the pipeline's and deliberately not the
+    # same credentials -- the projection is the only thing that writes there,
+    # and it needs no access to anything else the app owns.
+    #
+    # Unset by default, because a deployment with nothing to project to should
+    # not be quietly connecting to `localhost:5432/postgres` and finding a table
+    # named `leads`. `serving_dsn()` raises when the host is missing rather than
+    # guessing.
+    serving_host: str | None = None
+    serving_port: int = 5432
+    serving_user: str = "postgres"
+    serving_password: str = "postgres"
+    serving_db: str = "postgres"
+
     log_level: str = "info"
 
     # Copy WARNING and above into `service_log` as well as stdout, so the
@@ -211,16 +226,60 @@ class Settings(BaseSettings):
             if statement_timeout_ms is None
             else statement_timeout_ms
         )
-        name = application_name or self.application_name
-        user = quote(self.postgres_user, safe="")
-        password = quote(self.postgres_password, safe="")
-        database = quote(self.postgres_db, safe="")
+        return self._url(
+            self.postgres_user,
+            self.postgres_password,
+            self.postgres_host,
+            self.postgres_port,
+            self.postgres_db,
+            timeout,
+            application_name or self.application_name,
+        )
+
+    def _url(
+        self,
+        user: str,
+        password: str,
+        host: str,
+        port: int,
+        database: str,
+        statement_timeout_ms: int,
+        application_name: str,
+    ) -> str:
+        """The encoding rules above, applied to whichever database is meant.
+
+        Shared so the serving database cannot end up with a laxer rule about
+        what a password may contain than the pipeline's own.
+        """
         return (
-            f"postgresql://{user}:{password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{database}"
+            f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
+            f"@{host}:{port}/{quote(database, safe='')}"
             f"?connect_timeout={self.connect_timeout_seconds}"
-            f"&application_name={quote(name, safe='')}"
-            f"&options={quote(f'-c statement_timeout={timeout}', safe='')}"
+            f"&application_name={quote(application_name, safe='')}"
+            f"&options={quote(f'-c statement_timeout={statement_timeout_ms}', safe='')}"
+        )
+
+    def serving_dsn(self, application_name: str = "pcdf-projection") -> str:
+        """A connection URL for the application database the projection writes.
+
+        Raises rather than defaulting, because every part of a Postgres DSN has
+        a plausible-looking default and the four of them together point at a
+        real, reachable, entirely wrong database.
+        """
+        if not self.serving_host:
+            raise RuntimeError(
+                "no serving database configured: set SERVING_HOST (and "
+                "SERVING_DB / SERVING_USER / SERVING_PASSWORD) before "
+                "projecting. See docs/guides/serving-projection.md."
+            )
+        return self._url(
+            self.serving_user,
+            self.serving_password,
+            self.serving_host,
+            self.serving_port,
+            self.serving_db,
+            self.statement_timeout_ms,
+            application_name,
         )
 
     @property

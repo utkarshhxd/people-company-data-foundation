@@ -235,6 +235,14 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
       AI_MAPPING_ENABLED: ${AI_MAPPING_ENABLED:-false}
+      # The application database the projection writes to. Unset by default, so
+      # a stack with nothing to serve simply has no serving database rather than
+      # a default one pointing somewhere real and wrong.
+      SERVING_HOST: ${SERVING_HOST:-}
+      SERVING_PORT: ${SERVING_PORT:-5432}
+      SERVING_DB: ${SERVING_DB:-}
+      SERVING_USER: ${SERVING_USER:-}
+      SERVING_PASSWORD: ${SERVING_PASSWORD:-}
     volumes:
       - ./data:/data
       - ./tools:/tools:ro

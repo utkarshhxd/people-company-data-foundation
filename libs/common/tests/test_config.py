@@ -198,3 +198,46 @@ def test_migrations_can_lift_the_statement_timeout(monkeypatch):
     )
     assert parsed["options"] == "-c statement_timeout=0"
     assert parsed["application_name"] == "pcdf-migrate"
+
+
+# --------------------------------------------------------------------------
+# the serving database
+# --------------------------------------------------------------------------
+
+
+def test_no_serving_database_is_an_error_not_a_guess(monkeypatch, secrets_dir):
+    """Every part of a DSN has a plausible default, and the four of them
+    together point at a real, reachable, entirely wrong database."""
+    for name in ("SERVING_HOST", "SERVING_DB", "SERVING_USER", "SERVING_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(RuntimeError, match="no serving database configured"):
+        Settings().serving_dsn()
+
+
+def test_the_serving_password_is_encoded_like_any_other(monkeypatch, secrets_dir):
+    """The second database must not get a laxer rule about what a password may
+    contain than the first one."""
+    import psycopg
+
+    monkeypatch.setenv("SERVING_HOST", "leadsnemo-db")
+    monkeypatch.setenv("SERVING_DB", "leadsnemo")
+    monkeypatch.setenv("SERVING_USER", "projector")
+    monkeypatch.setenv("SERVING_PASSWORD", "p@ss:w/rd#1")
+
+    parsed = psycopg.conninfo.conninfo_to_dict(Settings().serving_dsn())
+    assert parsed["host"] == "leadsnemo-db"
+    assert parsed["dbname"] == "leadsnemo"
+    assert parsed["user"] == "projector"
+    assert parsed["password"] == "p@ss:w/rd#1"
+
+
+def test_the_projection_names_itself_on_the_connection(monkeypatch, secrets_dir):
+    """`pg_stat_activity` should say which job is holding a lock in the app's
+    database, where the app's own connections are the ones it will be mistaken
+    for."""
+    import psycopg
+
+    monkeypatch.setenv("SERVING_HOST", "leadsnemo-db")
+    parsed = psycopg.conninfo.conninfo_to_dict(Settings().serving_dsn())
+    assert parsed["application_name"] == "pcdf-projection"

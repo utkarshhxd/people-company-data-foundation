@@ -1,0 +1,916 @@
+<title>Cutting the AKS Cord</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap');
+
+  :root {
+    --bg: #f7f4ee;
+    --bg-raised: #efeadf;
+    --ink: #201c16;
+    --ink-soft: #55503f;
+    --ink-faint: #8c8571;
+    --line: #ddd5c2;
+    --accent: #b5541f;
+    --accent-soft: #e8c9a8;
+    --voice-a: #3f6e63;
+    --voice-a-soft: #d3e2dc;
+    --voice-b: #b5541f;
+    --voice-b-soft: #f0dcc4;
+    --code-bg: #eae3d2;
+    --code-ink: #4a4331;
+    --shadow: 0 1px 2px rgba(32, 28, 22, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17140f;
+      --bg-raised: #211d16;
+      --ink: #ece6d8;
+      --ink-soft: #bcb29b;
+      --ink-faint: #7d7563;
+      --line: #33301f;
+      --accent: #e0a56d;
+      --accent-soft: #4a3623;
+      --voice-a: #8fc3b3;
+      --voice-a-soft: #223330;
+      --voice-b: #e0a56d;
+      --voice-b-soft: #3d2c1a;
+      --code-bg: #221f16;
+      --code-ink: #d9cfb6;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #17140f;
+    --bg-raised: #211d16;
+    --ink: #ece6d8;
+    --ink-soft: #bcb29b;
+    --ink-faint: #7d7563;
+    --line: #33301f;
+    --accent: #e0a56d;
+    --accent-soft: #4a3623;
+    --voice-a: #8fc3b3;
+    --voice-a-soft: #223330;
+    --voice-b: #e0a56d;
+    --voice-b-soft: #3d2c1a;
+    --code-bg: #221f16;
+    --code-ink: #d9cfb6;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: 1.08rem;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 4.5rem 1.5rem 6rem;
+  }
+
+  header.masthead {
+    margin-bottom: 3.5rem;
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+  }
+
+  h1 {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(2.1rem, 5vw, 2.85rem);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .dek {
+    font-size: 1.15rem;
+    color: var(--ink-soft);
+    max-width: 40em;
+    margin: 0 0 2rem;
+    text-wrap: balance;
+  }
+
+  .cast {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 1.1rem 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+
+  .cast-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+
+  .cast-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .cast-row.a .cast-dot { background: var(--voice-a); }
+  .cast-row.b .cast-dot { background: var(--voice-b); }
+
+  .cast-name {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  /* chapters */
+  .chapter {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 3.8rem 0 1.6rem;
+  }
+
+  .chapter:first-of-type { margin-top: 0.5rem; }
+
+  .chapter-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+
+  .chapter-rule {
+    height: 1px;
+    background: var(--line);
+    flex: 1;
+  }
+
+  /* dialogue */
+  .line {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 1.1rem;
+    margin-bottom: 1.5rem;
+    align-items: start;
+  }
+
+  .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 0.22rem 0.5rem;
+    border-radius: 3px;
+    text-align: center;
+    align-self: start;
+    margin-top: 0.2rem;
+  }
+
+  .line.a .tag { color: var(--voice-a); background: var(--voice-a-soft); }
+  .line.b .tag { color: var(--voice-b); background: var(--voice-b-soft); }
+
+  .line p {
+    margin: 0 0 0.7rem;
+  }
+  .line p:last-child { margin-bottom: 0; }
+
+  .line code, p code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+
+  /* callout / cheat sheet */
+  .callout {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.4rem 1.5rem;
+    margin: 1rem 0 2rem;
+    box-shadow: var(--shadow);
+  }
+
+  .callout-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+    font-weight: 600;
+  }
+
+  .callout dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem 1rem;
+    font-size: 0.95rem;
+  }
+
+  .callout dt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    padding-top: 0.15rem;
+  }
+
+  .callout dd {
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .callout pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.82rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 5px;
+    overflow-x: auto;
+    margin: 0.2rem 0 0;
+    line-height: 1.55;
+  }
+
+  table.status {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+    margin: 0.5rem 0 0;
+  }
+  table.status th, table.status td {
+    text-align: left;
+    padding: 0.4rem 0.6rem 0.4rem 0;
+    border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  table.status th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .pill {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.1em 0.5em;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .pill.ok { background: var(--voice-a-soft); color: var(--voice-a); }
+  .pill.warn { background: var(--voice-b-soft); color: var(--voice-b); }
+
+  footer.endnote {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    text-align: center;
+  }
+
+  @media (max-width: 520px) {
+    .line { grid-template-columns: 1fr; gap: 0.35rem; }
+    .tag { justify-self: start; }
+    .page { padding: 3rem 1.15rem 4rem; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">A conversation, start to finish</p>
+    <h1>Cutting the AKS Cord</h1>
+    <p class="dek">How the PCDF pipeline went from "running on Azure's managed Kubernetes" to "running on three — well, one — plain Linux VMs we manage ourselves," told as a conversation between two people, one of whom just wants it explained simply.</p>
+    <div class="cast">
+      <div class="cast-row a">
+        <span class="cast-dot"></span>
+        <span><span class="cast-name">MAYA</span> — new-ish to the infra side, asking the questions</span>
+      </div>
+      <div class="cast-row b">
+        <span class="cast-dot"></span>
+        <span><span class="cast-name">DEV</span> — was in the room for all of it, explaining</span>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 1 — Where this even started</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay, so I heard we "moved off AKS." Before we get into that — what even is PCDF? What was running before any of this?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>PCDF is a data pipeline. Vendors send us company and contact data — CSV exports, mostly — and the system ingests each file, figures out what its columns mean, cleans it up, checks it against rules, works out when two rows from different vendors are actually the same real company, and merges everything into one "golden record" per entity, keeping a trail of exactly which vendor said what.</p>
+        <p>It's a handful of small services doing that in sequence — ingestion, mapping, normalization, validation, resolution, golden — plus a database, a message queue between the stages, a watcher that notices new files, and a review console where a human looks at anything the system isn't sure about.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And all of that was running on Azure, in AKS. What's AKS again, exactly?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Azure Kubernetes Service. Kubernetes is the thing that actually runs all those little services — it decides which machine each one lands on, restarts anything that crashes, that sort of housekeeping. AKS is Microsoft's version of "we'll run Kubernetes for you" — you don't manage the control plane, you just describe what you want running and Azure keeps a Kubernetes cluster alive underneath it.</p>
+        <p>Alongside it we had ACR — Azure Container Registry — which is just where our built application images lived, so the cluster had somewhere to pull them from.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Sounds convenient. So why touch it at all?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Two separate things happened, more or less at once. First, Elad wanted the cluster provisioned properly — through Terraform, not someone typing <code>az aks create</code> by hand and nobody quite remembering what flags they used. Second, and bigger: the team lead asked, in his words, whether we could "remove the dependency on ACR and AKS" — meaning, stop being tied to Azure's own Kubernetes product specifically, not just Azure in general.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 2 — What "vendor lock-in" actually means here</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>That's the phrase I keep hearing and nodding along to. What does vendor lock-in actually mean, in terms anyone could picture?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>It means: if we wanted to leave Azure tomorrow — move to AWS, Google Cloud, a rack in someone's office — how much would we have to rewrite? If the answer is "basically everything," you're locked in. If the answer is "just the bit that talks to the cloud," you're not, really.</p>
+        <p>The trap is usually the convenient stuff. A managed database with automatic backups, a managed message queue, a managed dashboard tool — each one removes work today, and each one is a piece of your system that only exists on that one cloud. Do enough of that and switching clouds stops being a project and becomes a rewrite.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>So had we done that? Was PCDF full of Azure-only pieces?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Actually — no, and this is the part that made the whole conversation easier than it could've been. Whoever set up the Kubernetes side originally was deliberate about it. Postgres, Kafka, Prometheus, Grafana — all of it ran as perfectly ordinary containers inside the cluster, the same containers Docker Compose already used locally. No managed Azure database, no managed Azure message queue.</p>
+        <p>There's an old design decision on file about exactly this — it says, more or less, "the cloud supplies a Kubernetes cluster and a place to store container images, and nothing above that line is bought from one vendor." Everything Azure-specific lived in one small folder, clearly labeled as the only place in the whole codebase that knew Azure existed.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay, so if that was already true — what was actually still Azure-shaped?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Exactly two things: the cluster itself was AKS, and the image storage was ACR. Small, but real — both are Azure products with Azure APIs, not something every cloud offers in an identical shape. That's what the team lead was pointing at.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 3 — Terraform first: writing it down properly</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Let's do this in order. First move was Terraform, right — what problem does that actually solve?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Before Terraform, the cluster got created by running a shell script that called Azure's command-line tool directly — <code>az aks create</code>, <code>az acr create</code>, that kind of thing. It was a careful script, it even checked quota and asked "are you sure, this costs money" before doing anything. But it was still <em>imperative</em> — a list of steps someone runs once, by hand.</p>
+        <p>The problem with that: there's no file anywhere that says what the cluster actually looks like right now. If two people ran it with slightly different settings on two different days, you'd have two different clusters and no diff to compare them by.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And Terraform fixes that how?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Terraform is <em>declarative</em> — you write a file that says "this is what should exist," and it figures out what to create, change, or delete to make reality match the file. That file lives in version control, same as application code. Anyone can read it and know exactly what's running, and before it changes anything, it shows you a plan — "here's what I'm about to do" — so nothing happens as a surprise.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Elad also said something about "two worker nodes, one master node." What does that mean in Kubernetes terms?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>That phrase is actually a small clue about what he was picturing. A Kubernetes cluster has a "control plane" — the brain that decides where things run — and "worker nodes," the machines that actually run your containers. On AKS, the control plane is invisible; Azure runs it for you and you never see a "master node" at all, you only pick how many worker nodes you want.</p>
+        <p>So "one master, two workers" isn't really AKS language — it's the language of running Kubernetes <em>yourself</em>, where you do stand up a visible master node. Which turned out to matter a lot for what came next.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 4 — The bigger ask: no more AKS, no more ACR</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay so that first Terraform version — did it still use AKS underneath?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>It did, at first — Terraform that provisioned an AKS cluster and an ACR registry, just written down properly instead of run by hand. That was a real improvement on its own. But then the team lead's actual question came back around: can we drop AKS and ACR <em>entirely</em>, not just manage them better?</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Is that even possible? I thought Kubernetes basically needed a cloud to run it for you.</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>No — that's the managed-service pitch, but it's not actually true. Kubernetes is open-source software. You can install it on any Linux machine yourself. AKS just does that installation and upkeep for you, as a paid convenience.</p>
+        <p>There's a lightweight distribution called <strong>k3s</strong> that makes self-installing much less painful than it sounds — it's the same real Kubernetes API underneath, just packaged as a single small binary. One command installs it as the "server" (that's your master), and a similar one-liner joins any other machine as an "agent" (a worker).</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>So the plan became: rent plain virtual machines instead of AKS, and put k3s on them ourselves?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Exactly. Three virtual machines — one running as the k3s server (the "1 master" from Elad's ask), two joined as agents (the "2 workers"). Terraform provisions plain Azure VMs now, instead of an AKS cluster. A virtual machine is about the least Azure-specific thing you can rent — literally every cloud, and plenty of on-prem racks, sell "a Linux box," so that's a much smaller thing to be tied to than "Azure's specific Kubernetes product."</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And ACR — what replaced that?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p><strong>ghcr.io</strong> — GitHub's container registry. It's not Azure, it's not tied to this cloud or that one, and since we already have a GitHub org, there's no new account or billing relationship to set up. Same idea as ACR — "somewhere to store the built application images" — just not owned by the same company that owns the VMs.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 5 — What we gave up to get there</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>This all sounds like a clean upgrade so far. Was there a catch?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>There's a real one, and it's worth saying plainly rather than glossing over: AKS wasn't just "a Kubernetes cluster," it was a Kubernetes cluster that Microsoft keeps healthy for you. It patches the control plane, it takes care of certificates quietly expiring, it handles the version upgrades, it keeps backups of the cluster's internal state.</p>
+        <p>The moment we run k3s on our own VMs, every one of those becomes <em>our</em> job. Nobody's coming to fix it for us if the one server node has a bad night.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>That sounds like a lot to take on for the sake of a principle.</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>It's a real trade, not a free lunch — full portability against zero operational safety net. For a team that's small or stretched, staying on AKS and eating the small lock-in is a completely defensible choice. It came down to what the team actually wants to own. Given the ask, we went with dropping AKS — but it's the kind of decision worth someone consciously signing off on, not something to slide into by default.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Anything else that broke by making this move?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>One more real one — storage. AKS came with "Azure Files," a managed network drive two pods could both write to at once, which this system genuinely needs (the file-watcher and the upload form both write into the same folder). With no AKS, there's no Azure Files. So now the cluster runs its own tiny file-server pod using plain NFS — the decades-old "network file system" protocol — and everything else points at that instead. One more thing we own that we didn't used to.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 6 — Actually building it</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Alright, walk me through what actually happened when this got built for real.</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>First surprise: there was already an AKS cluster sitting there from an earlier trial run, still turned on, still costing money. Before touching anything new, that had to go — the old cluster and the old registry, deleted cleanly, in one shot by removing the resource group that held both.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Bit nerve-wracking, deleting something that was actually running?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Worth checking first, always — you look at what's actually in there before you delete anything, and you get an explicit "yes, go ahead" before it happens. In this case it was clearly the leftover from the earlier AKS trial, nothing anyone was relying on, so the answer was easy. But that check happens every time, not just when it's obviously safe.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay, clean slate. Then what?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Terraform needs somewhere to keep track of what it's created — its "state." So a small one-time step first: a storage account just for that bookkeeping. Then the real plan: one resource group, a network, three virtual machines — one master, two workers, matching the ask exactly.</p>
+        <p>Terraform showed the plan, it got a genuine go-ahead — this spends real money the moment it runs — and it started creating things.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And it just... worked?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>The master came up fine. Both workers failed — Azure said no, this subscription has a hard cap of 4 vCPUs total in that region, and the master alone had already used all four. Trial-subscription limit, not a mistake in the plan.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>So — request more quota?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>That's the real fix eventually, and it's still sitting there as a next step. For right now, the pragmatic move: tear down the half-finished attempt cleanly, and re-apply asking for <em>zero</em> worker nodes — just the one server VM. k3s doesn't wall off its own server node from running workloads the way a "real" managed cluster's control plane usually does, so one machine can still run the entire stack. Not the shape that was asked for, but a working cluster today instead of a stuck one waiting on a support ticket.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 7 — Three bugs that only showed up by actually deploying</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>You mentioned things broke along the way that had nothing to do with quota. What kind of things?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Three, all in the storage piece — that little file-server we built to replace Azure Files. Each one only shows up once you actually try to use the thing for real, which is exactly why standing it up and testing it mattered more than just writing the Terraform and calling it done.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Go through them — in plain terms, please.</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p><strong>One — the VM couldn't speak NFS at all.</strong> Mounting a network drive needs a small helper program installed on the machine doing the mounting, and the base Ubuntu image we used doesn't include it. Like trying to open a file type your computer has no app for — the file's fine, you're just missing the program that knows how to open it. One package install fixed it, and it's now baked into the setup scripts so it happens automatically next time.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay, and the second?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p><strong>Two — the address didn't resolve where it needed to.</strong> Inside the cluster, our little file-server has a friendly name, like a hostname. But the actual mounting of the network drive happens a level below the cluster, directly on the virtual machine's own operating system — and that layer has never heard of the cluster's internal naming system, so the friendly name meant nothing to it. Silence, not an error — just hung forever.</p>
+        <p>Fix: give that file-server a fixed, unchanging numeric address instead of relying on the name, and point the mount at the number directly. Less friendly to read, completely unambiguous to use.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And the third?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p><strong>Three — asking for the wrong folder.</strong> This one's a bit odd but harmless once you know it: the little file-server software we used has a setting that makes its shared folder <em>become</em> the very top of what it offers, rather than a folder <em>inside</em> the top. We were asking for "the folder named exports," when what actually existed at that point was just "everything," full stop — so the server correctly said "no such folder," because from its point of view, that name didn't exist as a sub-folder anymore. Pointing at the top level instead of the named folder fixed it immediately.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>That's three separate, fiddly things. How'd you even track them down?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>One at a time, in order — fix one, watch what happens, read the next error, fix that. Each one produced a different, specific error message once the previous one was out of the way, which made them findable rather than mysterious. That's really the whole method: change the smallest thing that could be wrong, look again, repeat.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 8 — Getting images onto the cluster</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Before the storage saga — where did the actual application come from? The cluster doesn't run source code directly, right?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Right — everything gets built into a container image first, one per service, eight in total. There's already a script that does exactly this and pushes the result somewhere; it never cared which registry, so pointing it at <code>ghcr.io</code> instead of ACR was a one-line change, not a rewrite.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>And then the cluster just... pulls them?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Almost — this is where ACR's convenience quietly showed up again. AKS could be told "trust this registry," once, and every pod could pull from it with no further setup. ghcr.io has no equivalent handshake with a cluster it's never heard of, so the cluster needs its own credential — a small secret holding a username and an access token, referenced by every workload that needs to pull one of our private images.</p>
+        <p>That secret should never just get typed into a chat window or a shared log — it's a real, live credential. It got created directly against the cluster instead, and flagged for rotating afterwards the moment it did end up pasted somewhere it shouldn't have.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 9 — Proving it actually works</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Okay, so eventually every pod said "Running." Done?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>"Running" only proves the containers started — it says nothing about whether the actual pipeline logic works end to end. So the real test: build a tiny fake vendor file, three made-up companies, and push it through the front door exactly the way a real vendor export would arrive.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>What did that look like?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>A three-row CSV — company name, website, city, country, phone, employee count — dropped into the folder the watcher polls. Within one polling cycle, the watcher's log said it plainly: <code>read 3, processed 3, failed 0, new 3</code>. It had even worked out what the six column headers meant on its own, with no manual mapping written for this made-up vendor.</p>
+        <p>Then the real proof — querying the database directly for finished "golden records," the very last stage of the pipeline — and there they were. All three companies, every field correct, having survived ingestion, mapping, normalization, validation, and matching, in that order, for real.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>That's a genuinely reassuring thing to see, not just "the pods are green."</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Exactly the point of doing it. A healthy-looking pod and a working pipeline are two different claims, and only one of them was actually tested until that step.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="chapter">
+      <span class="chapter-label">Chapter 10 — Where things actually stand</span>
+      <span class="chapter-rule"></span>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Give me the honest scoreboard. What's real and working right now, and what's still owed?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <div class="callout" style="margin-top:0.3rem;">
+          <p class="callout-title">Status, plainly</p>
+          <table class="status">
+            <tr><th>Piece</th><th>State</th></tr>
+            <tr><td>Old AKS cluster + ACR registry</td><td><span class="pill ok">removed</span></td></tr>
+            <tr><td>New cluster (k3s on plain VMs)</td><td><span class="pill ok">running</span> — 1 node, not yet 1+2</td></tr>
+            <tr><td>Images on ghcr.io</td><td><span class="pill ok">pushed</span></td></tr>
+            <tr><td>Shared storage (self-hosted NFS)</td><td><span class="pill ok">working</span>, both bugs fixed</td></tr>
+            <tr><td>Full pipeline, real data</td><td><span class="pill ok">verified</span> — smoke test passed</td></tr>
+            <tr><td>Two worker nodes</td><td><span class="pill warn">blocked</span> — needs an Azure quota increase</td></tr>
+            <tr><td>Public access (ingress)</td><td><span class="pill warn">not set up</span> — port-forward only, on purpose</td></tr>
+            <tr><td>Nightly backup job</td><td><span class="pill warn">scheduled, untested</span></td></tr>
+            <tr><td>GitHub access token used during setup</td><td><span class="pill warn">needs rotating</span> — it was pasted in chat</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Last thing — how do I actually go look at it myself?</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>Two commands, and it stays entirely on your own machine — nothing gets exposed to the internet by running these.</p>
+        <div class="callout">
+          <p class="callout-title">See it yourself</p>
+          <dl>
+            <dt>Review console</dt>
+            <dd>
+              <pre>kubectl port-forward -n pcdf svc/review-console 8000:8000</pre>
+              then open <code>http://localhost:8000/admin/page</code>
+            </dd>
+            <dt>Dashboards</dt>
+            <dd><pre>kubectl port-forward -n pcdf svc/grafana 3000:3000</pre></dd>
+            <dt>Login keys</dt>
+            <dd><pre>kubectl get secret pcdf-secrets -n pcdf -o jsonpath='{.data.pcdf_api_keys}' | base64 -d</pre></dd>
+          </dl>
+        </div>
+        <p>Leave the port-forward running in its own window while you're looking — close it and the tunnel closes, the console keeps running on the cluster either way.</p>
+      </div>
+    </div>
+
+    <div class="line a">
+      <span class="tag">MAYA</span>
+      <div>
+        <p>Alright. That actually all makes sense now — thanks for walking through it properly instead of just handing me "it's done."</p>
+      </div>
+    </div>
+
+    <div class="line b">
+      <span class="tag">DEV</span>
+      <div>
+        <p>That's the part worth remembering more than any of the specific fixes: "it's done" and "it's been proven to work" are different sentences. Worth keeping them different.</p>
+      </div>
+    </div>
+
+  </section>
+
+  <footer class="endnote">pcdf infrastructure — a conversation, not a spec</footer>
+
+</div>

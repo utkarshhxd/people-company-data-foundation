@@ -1,0 +1,58 @@
+# Everything in this repository that knows Azure exists is in this directory
+# and deploy/azure/terraform/ -- and as of
+# docs/decisions/0023-remove-aks-and-acr-dependency.md, that is only the
+# Terraform module provisioning three plain VMs. This overlay itself no
+# longer names Azure at all: the cluster is self-managed k3s, and the
+# registry is ghcr.io. It stays under deploy/azure/ because that is still
+# where these VMs happen to run, not because anything below is coupled to
+# Azure.
+#
+# The base (infra/kustomization.yaml and infra/k8s/base/) is plain Kubernetes:
+# no managed database, no managed broker, no cloud-specific CRD, nothing that
+# stops it being applied to a cluster somewhere else. Postgres, Kafka,
+# Prometheus, Alertmanager, Grafana and now the shared-storage NFS server
+# (infra/k8s/base/09-nfs-server.yaml) all run as pods. Nothing above that
+# line is bought from one vendor -- not even the cluster's control plane any
+# more, since it's k3s on plain VMs rather than a managed Kubernetes service.
+#
+# What is left over, and the only reason this overlay exists: which registry
+# the images come from. (Storage used to be the other one -- which
+# StorageClass backed the one volume two pods write at once -- until the
+# cluster started running its own NFS server instead of renting one from a
+# cloud; see infra/k8s/base/12-data-pvc.yaml.) To deploy somewhere else, copy
+# this directory, change the registry, and nothing else moves.
+#
+# Why deploy/ and not infra/overlays/: kustomize refuses a base that contains
+# the overlay pointing at it ("cycle detected"), and the base's root has to be
+# infra/ so it can read the Prometheus rules and Grafana dashboards under it.
+#
+#   kubectl kustomize deploy/azure          # render
+#   kubectl apply -k deploy/azure           # apply
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pcdf
+
+resources:
+  - ../../infra
+
+# ghcr.io/utkarshcruxhub -- matches REGISTRY passed to
+# infra/scripts/build-and-push.sh. See deploy/azure/terraform/README.md's
+# "After apply" steps.
+images:
+  - name: REGISTRY/pcdf-ingestion
+    newName: ghcr.io/utkarshcruxhub/pcdf-ingestion
+  - name: REGISTRY/pcdf-watcher
+    newName: ghcr.io/utkarshcruxhub/pcdf-watcher
+  - name: REGISTRY/pcdf-mapping
+    newName: ghcr.io/utkarshcruxhub/pcdf-mapping
+  - name: REGISTRY/pcdf-normalization
+    newName: ghcr.io/utkarshcruxhub/pcdf-normalization
+  - name: REGISTRY/pcdf-validation
+    newName: ghcr.io/utkarshcruxhub/pcdf-validation
+  - name: REGISTRY/pcdf-resolution
+    newName: ghcr.io/utkarshcruxhub/pcdf-resolution
+  - name: REGISTRY/pcdf-golden
+    newName: ghcr.io/utkarshcruxhub/pcdf-golden
+  - name: REGISTRY/pcdf-review-console
+    newName: ghcr.io/utkarshcruxhub/pcdf-review-console

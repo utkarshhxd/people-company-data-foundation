@@ -1,0 +1,215 @@
+# The same stack, sized for the trial-credit cluster.
+#
+# This exists because an Azure free-trial subscription is capped at 4 vCPUs
+# per region. The Terraform module spends them as 1 master (Standard_B2s,
+# 2 vCPU / 4 GiB) and 2 workers (Standard_B1ms, 1 vCPU / 2 GiB each) -- the
+# real 1-master/2-worker shape, at the smallest sizes that fit. That is
+# 4 vCPU and ~8 GiB for the whole stack, against the 4 vCPU / 16 GiB single
+# node this overlay was originally written for. It layers on deploy/azure
+# and changes one thing:
+#
+#   * every workload gets CPU and memory requests and limits. On a large
+#     cluster their absence is survivable; spread across three nodes this
+#     small it is not, because a pod with no request is BestEffort and
+#     BestEffort is what the kubelet evicts first when a node runs short.
+#
+# The requests below are also what lets the scheduler spread the stack over
+# three nodes sensibly rather than piling it onto whichever node it looks at
+# first.
+#
+# The shared /data volume needs no change here -- it is backed by the
+# cluster's own NFS server (infra/k8s/base/09-nfs-server.yaml) regardless of
+# node count, unlike the old AKS/Azure Files setup this overlay used to also
+# revert. See docs/decisions/0023-remove-aks-and-acr-dependency.md.
+#
+# Every node needs the NFS client package for that volume to mount at all;
+# infra/k3s/install-{server,agent}.sh.tpl install it.
+#
+# What this gives up, stated plainly: there is no high availability of any
+# kind. One k3s server means the control plane is a single point of failure,
+# and B-series are burstable -- they throttle under sustained load rather
+# than sizing for it. This is a shape for proving the system on trial credit,
+# not for running it for anyone.
+#
+#   kubectl kustomize deploy/azure-trial          # render
+#   kubectl apply -k deploy/azure-trial           # apply
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pcdf
+
+resources:
+  - ../azure
+
+patches:
+  # The PersistentVolumeClaims here cost no Azure data-disk slots: k3s's
+  # default StorageClass is local-path, which hands out directories on the
+  # node's own OS disk rather than attaching a managed disk per claim. What
+  # that trades away is mobility -- a local-path volume pins its pod to the
+  # node that holds it, so a node lost is that node's volumes lost. The one
+  # volume two pods share is the NFS-backed pcdf-data, not a local-path one.
+
+  # nfs-server backs pcdf-data (infra/k8s/base/12-data-pvc.yaml) -- every pod
+  # writing or reading through it stalls if it is evicted, so it gets the
+  # same treatment as Postgres: a request that keeps it out of BestEffort.
+  - target:
+      kind: Deployment
+      name: nfs-server
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  # --- the two memory-hungry pods -----------------------------------------
+  # Kafka runs a JVM whose default heap is around 1 GiB, so its limit has to
+  # clear that with room for the JVM's own non-heap use. A limit below the heap
+  # size is an OOMKill on a timer.
+  - target:
+      kind: StatefulSet
+      name: kafka
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 300m
+            memory: 1Gi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+
+  # Postgres is the source of truth for the whole system and the one pod that
+  # should never be the one evicted. Its request is what reserves that.
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 300m
+            memory: 768Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+
+  # Prometheus's memory grows with active series. At this scale -- one scrape
+  # target, a few dozen series -- 512 MiB is generous, and the 90-day retention
+  # in 40-prometheus.yaml costs disk rather than RAM.
+  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 150m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 1536Mi
+
+  - target:
+      kind: Deployment
+      name: grafana
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+
+  - target:
+      kind: Deployment
+      name: alertmanager
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+  # --- the console --------------------------------------------------------
+  # Serves HTTP and runs the reconciliation queries, so it gets more headroom
+  # than a consumer. Uploads stream to disk rather than into memory
+  # (review_console/src/review_console/uploads.py), so a large file does not
+  # move this number.
+  - target:
+      kind: Deployment
+      name: review-console
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 150m
+            memory: 384Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+
+  # --- the six Python workers ---------------------------------------------
+  # Five stage consumers and the watcher. Each is one process handling one
+  # batch at a time; they are idle most of the time and burst while a file is
+  # moving. The limit is deliberately well above the request so a burst is
+  # allowed, while the request keeps them out of BestEffort.
+  - target:
+      kind: Deployment
+      name: "(mapping|normalization|validation|resolution|golden|watcher)"
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            cpu: 500m
+            memory: 640Mi
+
+  # --- the backup job ------------------------------------------------------
+  # pg_dump plus pg_restore --list, once a night. Small, but not free, and a
+  # CronJob pod with no request competes with the running stack at 02:00.
+  - target:
+      kind: CronJob
+      name: postgres-backup
+    patch: |
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  - target:
+      kind: Job
+      name: migrate
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

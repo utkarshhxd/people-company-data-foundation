@@ -32,6 +32,24 @@ data/inbox/watch/*/*
 !data/inbox/watch/*/feed.json
 !data/inbox/watch/README.md
 
+# Terraform working state. .tfstate can contain resource attributes the
+# provider treats as sensitive (e.g. connection strings); it belongs in the
+# remote backend (see deploy/azure/terraform/README.md), never in git.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.auto.tfvars
+
+# The kubeconfig copied off the master by the `kubeconfig_command` Terraform
+# output. It carries client-certificate-data and client-key-data -- full
+# cluster-admin credentials, not a pointer to them. Fetch it again rather
+# than keeping it anywhere it could be pushed.
+kubeconfig
+kubeconfig.yaml
+
 .venv/
 __pycache__/
 *.pyc

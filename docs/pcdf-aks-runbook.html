@@ -1,0 +1,1050 @@
+<title>PCDF on AKS</title>
+<meta name="description" content="A complete build log of deploying the People &amp; Company Data Foundation to Azure Kubernetes Service — every decision, every bug, every fix, in order." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   TOKENS
+   ============================================================ */
+:root{
+  /* -- light (default) -- */
+  --ink:        #171B23;
+  --ink-soft:   #565F70;
+  --ink-faint:  #8A93A3;
+  --paper:      #F1F4F9;
+  --paper-raised: #FFFFFF;
+  --paper-inset:  #E6EAF1;
+  --border:     #D6DCE6;
+  --border-soft:#E4E8EF;
+
+  --brass:      #9C6414;
+  --brass-ink:  #FFFFFF;
+  --brass-tint: #F3E4C8;
+
+  --signal:     #2C7A50;
+  --signal-tint:#DCEFE2;
+  --ember:      #B0431E;
+  --ember-tint: #F6DFD5;
+  --slate:      #33587F;
+  --slate-tint: #DDE7F1;
+
+  --shadow: 0 1px 2px rgba(23,27,35,.06), 0 8px 24px -12px rgba(23,27,35,.14);
+  --radius-sm: 4px;
+  --radius: 7px;
+
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:        #E8EBF2;
+    --ink-soft:   #A7B0C0;
+    --ink-faint:  #6C7688;
+    --paper:      #12151C;
+    --paper-raised: #1A1E27;
+    --paper-inset:  #0E1015;
+    --border:     #2B303C;
+    --border-soft:#232833;
+
+    --brass:      #E0A93E;
+    --brass-ink:  #1E1502;
+    --brass-tint: #33290F;
+
+    --signal:     #5FBE86;
+    --signal-tint:#123324;
+    --ember:      #E68158;
+    --ember-tint: #3A2016;
+    --slate:      #8FB0DA;
+    --slate-tint: #1B2A3D;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 12px 32px -14px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"]{
+  --ink:        #E8EBF2;
+  --ink-soft:   #A7B0C0;
+  --ink-faint:  #6C7688;
+  --paper:      #12151C;
+  --paper-raised: #1A1E27;
+  --paper-inset:  #0E1015;
+  --border:     #2B303C;
+  --border-soft:#232833;
+
+  --brass:      #E0A93E;
+  --brass-ink:  #1E1502;
+  --brass-tint: #33290F;
+
+  --signal:     #5FBE86;
+  --signal-tint:#123324;
+  --ember:      #E68158;
+  --ember-tint: #3A2016;
+  --slate:      #8FB0DA;
+  --slate-tint: #1B2A3D;
+
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 12px 32px -14px rgba(0,0,0,.55);
+}
+
+/* ============================================================
+   RESET-ISH / BASE
+   ============================================================ */
+*,*::before,*::after{ box-sizing: border-box; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--font-body);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+img,svg{ max-width:100%; display:block; }
+a{ color:inherit; }
+h1,h2,h3,h4{ font-family:var(--font-display); text-wrap:balance; margin:0; font-weight:700; letter-spacing:.005em; }
+p{ margin:0 0 1em; }
+p:last-child{ margin-bottom:0; }
+ul,ol{ margin:0 0 1em; padding-left:1.25em; }
+li+li{ margin-top:.35em; }
+code, .mono{ font-family:var(--font-mono); }
+:focus-visible{ outline:2px solid var(--brass); outline-offset:2px; border-radius:2px; }
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; scroll-behavior:auto !important; }
+}
+
+.eyebrow{
+  font-family:var(--font-mono);
+  font-size:.72rem;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+  color:var(--ink-faint);
+  font-weight:500;
+}
+
+/* tabular numerals wherever digits line up */
+.num, td.num, .statbar__value, .costtable td:nth-child(2), .costtable td:nth-child(3){
+  font-variant-numeric: tabular-nums;
+  font-family:var(--font-mono);
+}
+
+/* ============================================================
+   STATUS BAR (sticky header)
+   ============================================================ */
+.statusbar{
+  position:sticky; top:0; z-index:40;
+  background:var(--paper-raised);
+  border-bottom:1px solid var(--border);
+  padding: .7rem 1.25rem;
+}
+.statusbar__inner{
+  max-width:1180px; margin:0 auto;
+  display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+}
+.statusbar__mark{
+  font-family:var(--font-display); font-weight:700; font-size:1rem;
+  letter-spacing:.01em; white-space:nowrap;
+  display:flex; align-items:center; gap:.5rem;
+}
+.statusbar__mark .dot{
+  width:.5rem; height:.5rem; border-radius:50%; background:var(--brass);
+  box-shadow:0 0 0 3px var(--brass-tint);
+}
+.pill{
+  display:inline-flex; align-items:center; gap:.4em;
+  font-family:var(--font-mono); font-size:.72rem; font-weight:600;
+  letter-spacing:.04em; text-transform:uppercase;
+  padding:.28em .65em; border-radius:100px;
+  border:1px solid transparent;
+}
+.pill--stopped{ background:var(--ember-tint); color:var(--ember); border-color:color-mix(in srgb, var(--ember) 35%, transparent); }
+.pill--live{ background:var(--signal-tint); color:var(--signal); border-color:color-mix(in srgb, var(--signal) 35%, transparent); }
+.pill--slate{ background:var(--slate-tint); color:var(--slate); }
+.statusbar__stats{
+  display:flex; gap:1.4rem; margin-left:auto; flex-wrap:wrap;
+  font-size:.82rem;
+}
+.statusbar__stat{ display:flex; flex-direction:column; gap:.05rem; }
+.statusbar__stat span:first-child{ color:var(--ink-faint); font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; font-family:var(--font-mono); }
+.statusbar__stat span:last-child{ font-weight:600; font-family:var(--font-mono); }
+.navtoggle{
+  display:none;
+  font-family:var(--font-mono); font-size:.75rem; font-weight:600;
+  background:var(--paper-inset); border:1px solid var(--border); color:var(--ink);
+  border-radius:var(--radius-sm); padding:.4em .7em; cursor:pointer;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.layout{
+  max-width:1180px; margin:0 auto;
+  display:grid; grid-template-columns: 240px minmax(0,1fr);
+  gap:2.75rem;
+  padding: 2rem 1.25rem 6rem;
+  align-items:start;
+}
+.toc{
+  position:sticky; top:4.2rem;
+  max-height:calc(100vh - 5.5rem);
+  overflow-y:auto;
+  padding-right:.5rem;
+}
+.toc__title{ font-size:.68rem; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); font-family:var(--font-mono); margin-bottom:.85rem; }
+.toc ol{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.05rem; }
+.toc a{
+  display:flex; gap:.6em; align-items:baseline;
+  text-decoration:none; color:var(--ink-soft);
+  font-size:.85rem; padding:.4em .5em;
+  border-radius:var(--radius-sm);
+  border-left:2px solid transparent;
+}
+.toc a .n{ font-family:var(--font-mono); font-size:.72rem; color:var(--ink-faint); flex-shrink:0; }
+.toc a:hover{ background:var(--paper-inset); color:var(--ink); }
+.toc a.active{ border-left-color:var(--brass); color:var(--ink); background:var(--paper-inset); font-weight:600; }
+.toc a.active .n{ color:var(--brass); }
+
+main{ min-width:0; }
+
+/* ============================================================
+   SECTIONS / TYPE SCALE
+   ============================================================ */
+section{ padding-top: 2.6rem; margin-top: 2.6rem; border-top:1px solid var(--border-soft); scroll-margin-top: 4.6rem; }
+section:first-of-type{ border-top:none; margin-top:0; padding-top:0; }
+
+.chapter-head{ display:flex; align-items:baseline; gap:.85rem; margin-bottom:1.1rem; }
+.chapter-head .num{
+  font-family:var(--font-mono); font-weight:600; font-size:1rem; color:var(--brass);
+  background:var(--brass-tint); border-radius:var(--radius-sm);
+  padding:.15em .5em; flex-shrink:0;
+}
+h2{ font-size:1.55rem; line-height:1.2; }
+h3{ font-size:1.12rem; margin:1.6rem 0 .6rem; color:var(--ink); }
+h4{ font-size:.95rem; margin:1.1rem 0 .4rem; color:var(--ink); font-family:var(--font-body); font-weight:700; }
+.dek{ color:var(--ink-soft); font-size:1.02rem; max-width:64ch; margin-bottom:1.5rem; }
+.prose{ max-width:66ch; }
+.prose p{ max-width:66ch; }
+
+/* ============================================================
+   COMPONENTS
+   ============================================================ */
+
+/* decision card */
+.card{
+  background:var(--paper-raised); border:1px solid var(--border);
+  border-radius:var(--radius); padding:1.15rem 1.3rem;
+  box-shadow:var(--shadow); margin:1.25rem 0;
+}
+.card--decision{ border-left:3px solid var(--brass); }
+.card--verified{ border-left:3px solid var(--signal); }
+.card--bug{ border-left:3px solid var(--ember); }
+.card__label{ font-family:var(--font-mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:.4rem; }
+.card--decision .card__label{ color:var(--brass); }
+.card--verified .card__label{ color:var(--signal); }
+.card--bug .card__label{ color:var(--ember); }
+.card h4{ margin-top:0; }
+
+/* pros / cons */
+.proscons{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1.15rem 0; }
+.proscons > div{ border-radius:var(--radius); padding:1rem 1.1rem; border:1px solid var(--border); }
+.proscons .pros{ background:color-mix(in srgb, var(--signal-tint) 60%, var(--paper-raised)); border-color:color-mix(in srgb, var(--signal) 30%, var(--border)); }
+.proscons .cons{ background:color-mix(in srgb, var(--ember-tint) 55%, var(--paper-raised)); border-color:color-mix(in srgb, var(--ember) 28%, var(--border)); }
+.proscons h5{ margin:0 0 .55rem; font-family:var(--font-mono); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; }
+.proscons .pros h5{ color:var(--signal); }
+.proscons .cons h5{ color:var(--ember); }
+.proscons ul{ margin:0; padding-left:1.1em; font-size:.9rem; }
+.proscons li{ margin-top:.5em; }
+.proscons li:first-child{ margin-top:0; }
+.verdict{
+  display:flex; gap:.7em; align-items:flex-start; margin-top:.9rem;
+  font-size:.9rem; color:var(--ink-soft);
+  background:var(--paper-inset); border-radius:var(--radius-sm); padding:.75rem .9rem;
+}
+.verdict b{ color:var(--ink); }
+
+/* incident (bug) card */
+.incident{ margin:1.5rem 0; border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
+.incident__head{
+  display:flex; align-items:center; gap:.8rem; padding:.85rem 1.2rem;
+  background:var(--ember-tint); border-bottom:1px solid var(--border);
+}
+.incident__num{
+  font-family:var(--font-mono); font-weight:700; font-size:.85rem;
+  background:var(--ember); color:#fff; width:1.7em; height:1.7em; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.incident__title{ font-weight:700; font-size:1rem; }
+.incident__body{ padding:1.1rem 1.2rem; background:var(--paper-raised); }
+.incident__row{ display:grid; grid-template-columns:110px 1fr; gap:.9rem; padding:.55rem 0; border-top:1px solid var(--border-soft); }
+.incident__row:first-child{ border-top:none; padding-top:0; }
+.incident__row dt{ font-family:var(--font-mono); font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); padding-top:.15rem; }
+.incident__row dd{ margin:0; font-size:.92rem; }
+
+/* code / terminal blocks */
+pre{
+  background:var(--paper-inset); border:1px solid var(--border);
+  border-radius:var(--radius-sm); padding:.85rem 1rem;
+  overflow-x:auto; margin:.7rem 0;
+  font-family:var(--font-mono); font-size:.82rem; line-height:1.55;
+}
+pre code{ background:none; padding:0; }
+:not(pre) > code{
+  background:var(--paper-inset); border:1px solid var(--border-soft);
+  border-radius:3px; padding:.12em .38em; font-size:.87em;
+}
+.errline{ color:var(--ember); }
+.okline{ color:var(--signal); }
+.cmt{ color:var(--ink-faint); }
+
+/* tables */
+.tablewrap{ overflow-x:auto; margin:1.1rem 0; border:1px solid var(--border); border-radius:var(--radius); }
+table{ border-collapse:collapse; width:100%; font-size:.88rem; min-width:480px; }
+thead th{
+  text-align:left; font-family:var(--font-mono); font-size:.68rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--ink-faint); font-weight:600;
+  background:var(--paper-inset); padding:.6rem .85rem; border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+tbody td{ padding:.6rem .85rem; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+tbody tr:last-child td{ border-bottom:none; }
+tbody tr:hover{ background:var(--paper-inset); }
+
+/* pills for table cells */
+.tag{ display:inline-block; font-family:var(--font-mono); font-size:.72rem; font-weight:600; padding:.15em .5em; border-radius:4px; }
+.tag--new{ background:var(--slate-tint); color:var(--slate); }
+.tag--fix{ background:var(--brass-tint); color:var(--brass); }
+.tag--mod{ background:var(--paper-inset); color:var(--ink-soft); }
+
+/* command list */
+.cmdlist{ display:flex; flex-direction:column; gap:.5rem; margin:1rem 0; }
+.cmdlist pre{ margin:0; }
+.cmdlist .caption{ font-size:.8rem; color:var(--ink-soft); margin:0 0 .15rem; }
+
+/* stat grid */
+.statgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:.8rem; margin:1.2rem 0; }
+.statgrid__item{ border:1px solid var(--border); border-radius:var(--radius); padding:.8rem .95rem; background:var(--paper-raised); }
+.statgrid__item .v{ font-family:var(--font-mono); font-weight:600; font-size:1.35rem; color:var(--brass); }
+.statgrid__item .l{ font-size:.74rem; color:var(--ink-soft); margin-top:.15rem; }
+
+/* callout */
+.callout{ display:flex; gap:.8rem; border-radius:var(--radius); padding:1rem 1.15rem; margin:1.25rem 0; border:1px solid; font-size:.92rem; }
+.callout--info{ background:var(--slate-tint); border-color:color-mix(in srgb, var(--slate) 30%, var(--border)); }
+.callout--warn{ background:var(--ember-tint); border-color:color-mix(in srgb, var(--ember) 30%, var(--border)); }
+.callout__glyph{ font-family:var(--font-mono); font-weight:700; flex-shrink:0; width:1.4em; text-align:center; }
+.callout--info .callout__glyph{ color:var(--slate); }
+.callout--warn .callout__glyph{ color:var(--ember); }
+
+hr.rule{ border:none; border-top:1px dashed var(--border); margin:1.6rem 0; }
+
+/* glossary */
+.glossary{ display:grid; grid-template-columns:1fr; gap:.15rem; margin:1rem 0; }
+.glossary dt{ font-family:var(--font-mono); font-weight:600; font-size:.85rem; color:var(--brass); float:left; width:6.5em; }
+.glossary dd{ margin:0 0 .55rem 7em; font-size:.87rem; color:var(--ink-soft); }
+
+/* footer */
+footer{ max-width:1180px; margin:0 auto; padding:2rem 1.25rem 3.5rem; color:var(--ink-faint); font-size:.8rem; display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 880px){
+  .layout{ grid-template-columns: 1fr; padding-top:1.25rem; }
+  .toc{
+    position:static; max-height:none; padding-right:0;
+    border:1px solid var(--border); border-radius:var(--radius);
+    background:var(--paper-raised); padding:.9rem 1rem;
+    display:none;
+  }
+  .toc.open{ display:block; }
+  .navtoggle{ display:inline-block; }
+  .proscons{ grid-template-columns:1fr; }
+  .statusbar__stats{ display:none; }
+  .incident__row{ grid-template-columns:1fr; gap:.15rem; }
+}
+@media (max-width: 560px){
+  .layout{ padding-left:1rem; padding-right:1rem; }
+  h2{ font-size:1.32rem; }
+}
+</style>
+
+<div class="statusbar">
+  <div class="statusbar__inner">
+    <div class="statusbar__mark"><span class="dot"></span> PCDF · AKS build log</div>
+    <span class="pill pill--stopped">● cluster stopped</span>
+    <span class="pill pill--slate">southindia</span>
+    <div class="statusbar__stats">
+      <div class="statusbar__stat"><span>Pods last verified</span><span>12 / 12</span></div>
+      <div class="statusbar__stat"><span>Entities stored</span><span>816</span></div>
+      <div class="statusbar__stat"><span>Bugs found &amp; fixed</span><span>6</span></div>
+      <div class="statusbar__stat"><span>Residual cost</span><span>~₹2,000/mo</span></div>
+    </div>
+    <button class="navtoggle" id="navtoggle" type="button" aria-expanded="false">Contents ▾</button>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="toc" id="toc" aria-label="Table of contents">
+    <div class="toc__title">Contents</div>
+    <ol>
+      <li><a href="#summary"><span class="n">01</span>Summary</a></li>
+      <li><a href="#start"><span class="n">02</span>Starting point</a></li>
+      <li><a href="#decision"><span class="n">03</span>The big call</a></li>
+      <li><a href="#layers"><span class="n">04</span>Three layers</a></li>
+      <li><a href="#built"><span class="n">05</span>What got built</a></li>
+      <li><a href="#money"><span class="n">06</span>The money problem</a></li>
+      <li><a href="#cluster"><span class="n">07</span>Standing it up</a></li>
+      <li><a href="#resources"><span class="n">08</span>What exists in Azure</a></li>
+      <li><a href="#bugs"><span class="n">09</span>Six bugs, six fixes</a></li>
+      <li><a href="#proof"><span class="n">10</span>Proof it works</a></li>
+      <li><a href="#creds"><span class="n">11</span>Credentials that stick</a></li>
+      <li><a href="#queries"><span class="n">12</span>Getting data out</a></li>
+      <li><a href="#state"><span class="n">13</span>Where it stands</a></li>
+      <li><a href="#limits"><span class="n">14</span>What's not proven</a></li>
+      <li><a href="#reference"><span class="n">15</span>Full reference</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- 01 SUMMARY -->
+    <section id="summary">
+      <div class="chapter-head"><span class="num">01</span><h2>Summary</h2></div>
+      <p class="dek">The People &amp; Company Data Foundation (PCDF) — a Postgres/Kafka pipeline that already ran on Docker Compose — now runs the same way on Azure Kubernetes Service. Every piece is a pod. Nothing is Azure's except the cluster and the registry it pulls images from.</p>
+
+      <div class="statgrid">
+        <div class="statgrid__item"><div class="v">12/12</div><div class="l">pods running, zero crashes since deploy</div></div>
+        <div class="statgrid__item"><div class="v">816</div><div class="l">real entities resolved</div></div>
+        <div class="statgrid__item"><div class="v">51,973</div><div class="l">source-cell observations kept</div></div>
+        <div class="statgrid__item"><div class="v">6</div><div class="l">real bugs found on a live cluster</div></div>
+        <div class="statgrid__item"><div class="v">1 node</div><div class="l">Standard_D4as_v5, southindia</div></div>
+        <div class="statgrid__item"><div class="v">~₹2,000/mo</div><div class="l">cost while stopped</div></div>
+      </div>
+
+      <div class="callout callout--info">
+        <span class="callout__glyph">i</span>
+        <div><b>Where things stand right now:</b> the AKS node is <b>stopped</b> — compute billing is off. Every disk, every database row, every manifest survives untouched. <code>az aks start --name pcdf-aks --resource-group pcdf</code> brings it back exactly as it was, in 2–5 minutes, no redeploy. See <a href="#state">§12</a>.</div>
+      </div>
+
+      <p>This document is the whole story in order: what existed before, the architectural call and why, the money crisis that nearly derailed it, the real bugs a live cluster surfaced that no amount of reading YAML would have caught, and the exact commands to pick it back up or tear it down.</p>
+    </section>
+
+    <!-- 02 STARTING POINT -->
+    <section id="start">
+      <div class="chapter-head"><span class="num">02</span><h2>Starting point</h2></div>
+      <p class="dek">Before any of this, PCDF already worked — on one machine, via Docker Compose.</p>
+      <div class="prose">
+        <p>The repository turns messy vendor exports of people and companies into deduplicated, provenance-tracked "golden records." It's eleven services deep: Postgres holds the truth, Kafka announces when a batch is ready, five stage consumers (mapping → normalization → validation → resolution → golden) carry a record from raw row to trusted value, a watcher drives files dropped into a folder through the whole thing automatically, and a review console gives a human the four queues that need a decision.</p>
+        <p>A partial Kubernetes translation already existed — seven files under <code>infra/k8s/base/</code> — but its own README said it plainly: <b>"written and rendered, not deployed."</b> It covered three of the eleven running pieces (Postgres, the migrate Job, the watcher) and an ADR on file (<code>0016</code>) claimed a three-broker Kafka cluster and ten Deployments that simply weren't on disk. Nobody had ever pointed a real cluster at it.</p>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>What Compose already ran</th><th>What the old k8s manifests covered</th></tr></thead>
+          <tbody>
+            <tr><td>Postgres, Kafka, migrate Job</td><td>Postgres, migrate Job <span class="tag tag--mod">Kafka missing</span></td></tr>
+            <tr><td>5 stage consumers (mapping…golden)</td><td><span class="tag tag--mod">none</span></td></tr>
+            <tr><td>Watcher (auto-load path)</td><td>Watcher <span class="tag tag--mod">no liveness probe</span></td></tr>
+            <tr><td>Review console (browser UI)</td><td><span class="tag tag--mod">none</span></td></tr>
+            <tr><td>Prometheus, Alertmanager, Grafana</td><td><span class="tag tag--mod">none</span></td></tr>
+            <tr><td>Nightly <code>pg_dump</code> backup</td><td><span class="tag tag--mod">none — named as a known gap</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 03 THE BIG CALL -->
+    <section id="decision">
+      <div class="chapter-head"><span class="num">03</span><h2>The big call: pods, not managed services</h2></div>
+      <p class="dek">Azure sells a managed Postgres with point-in-time restore and a managed Kafka-compatible broker. The question that decided everything downstream: buy those, or run everything ourselves inside the cluster?</p>
+
+      <div class="card card--decision">
+        <div class="card__label">Decision</div>
+        <h4>Everything runs as a pod. Azure supplies exactly two things: a Kubernetes cluster and a container registry.</h4>
+        <p style="margin-top:.6rem">Postgres, Kafka, Prometheus, Alertmanager and Grafana are containers in the cluster, exactly as they're containers under Compose. Nothing in <code>infra/</code> names Azure. The only directory in the entire repository that knows the cloud provider exists is <code>deploy/azure/</code> — and that's on purpose.</p>
+      </div>
+
+      <p>This was the user's explicit steer, verbatim: <em>"we need to independ of these cloud providers, we dont need to get vender loced in."</em> That one sentence ruled out Azure Database for PostgreSQL and Azure Event Hubs before any cost comparison mattered — but the cost comparison backs it up anyway.</p>
+
+      <div class="proscons">
+        <div class="pros">
+          <h5>Self-hosted on k8s — chosen</h5>
+          <ul>
+            <li>Runs identically on AKS, GKE, EKS, or a rack in a closet — same YAML, one overlay swap</li>
+            <li>Same Dockerfiles Compose already builds; nothing forked into a cloud-only variant</li>
+            <li>Matches the project's own design premise (ADR 0003 / 0020): the data is meant to outlive whatever displays it — a pipeline that can't be moved contradicts that</li>
+            <li><code>az aks stop</code> parks the whole stack at near-zero cost between sessions — a managed database has no equivalent pause button</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h5>Self-hosted on k8s — the price paid</h5>
+          <ul>
+            <li>We own Postgres backup, patching, and failover — nobody else's product does it for us</li>
+            <li>No automatic point-in-time restore; the nightly <code>pg_dump</code> CronJob is the whole safety net</li>
+            <li>More manifests to write and maintain by hand</li>
+            <li>Every rough edge is ours to hit — and we hit six of them (see <a href="#bugs">§08</a>)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="proscons">
+        <div class="cons" style="order:1">
+          <h5>Managed Azure services — rejected</h5>
+          <ul>
+            <li>Azure Event Hubs' Kafka endpoint is SASL_SSL only — every consumer here assumes PLAINTEXT, so switching later is a real code change disguised as a config change</li>
+            <li>Real lock-in: leaving Azure later means rewriting the client, not re-pointing a hostname</li>
+            <li>Flexible Server has no cheap "off" switch the way an AKS node pool does — it bills continuously</li>
+            <li>Contradicts the "data outlives the display app" premise the rest of the codebase already commits to</li>
+          </ul>
+        </div>
+        <div class="pros" style="order:2">
+          <h5>Managed Azure services — what they'd have bought</h5>
+          <ul>
+            <li>Automatic backups, patching, and point-in-time restore — solved problems, not owned ones</li>
+            <li>An HA option for Postgres without hand-building Patroni or CloudNativePG</li>
+            <li>Less YAML overall; less to go wrong on a bad Tuesday</li>
+            <li>Battle-tested at a scale this project isn't at yet</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="verdict"><b>Verdict:</b>&nbsp;the trade was accepted with eyes open. Postgres failover still doesn't exist here — that gap is real and documented, not hidden — but it's a gap that can be closed later (streaming replication, a managed tier, whatever) without anyone having rewritten application code to get there.</div>
+    </section>
+
+    <!-- 04 THREE LAYERS -->
+    <section id="layers">
+      <div class="chapter-head"><span class="num">04</span><h2>Three layers, one Azure-shaped seam</h2></div>
+      <p class="dek">Kustomize overlays, not Helm — every other config surface in this repo is plain YAML, and a chart would be the first templating layer in the project.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Knows about</th><th>Job</th></tr></thead>
+          <tbody>
+            <tr><td><code>infra/k8s/base/</code></td><td>Nothing cloud-specific</td><td>The whole stack, portable. Every Deployment, StatefulSet, Service, PVC, CronJob.</td></tr>
+            <tr><td><code>deploy/azure/</code></td><td>Azure</td><td>Two edits only: the ACR registry each image resolves to, and <code>azurefile-csi</code> as the ReadWriteMany class for the shared <code>/data</code> volume.</td></tr>
+            <tr><td><code>deploy/azure-trial/</code></td><td>Azure + a 4-vCPU quota</td><td>Layers on top of <code>deploy/azure</code>: drops the shared volume back to ReadWriteOnce (one node makes RWX unnecessary), adds CPU/memory requests to all 14 workloads so a 16&nbsp;GiB node doesn't starve itself.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Why <code>deploy/</code> and not <code>infra/overlays/azure/</code>, which is where you'd expect it: kustomize refuses a base that contains the overlay pointing back at it — "cycle detected." The base's root has to stay <code>infra/</code> so it can read the Prometheus rules and Grafana dashboards underneath it, so the overlay had to move out.</p>
+      <p>What this buys, concretely: moving to GKE tomorrow means copying <code>deploy/azure/</code>, changing a registry hostname and a storage-class name, and nothing else. No application code, no Dockerfile, no base manifest touches Azure at all.</p>
+    </section>
+
+    <!-- 05 WHAT GOT BUILT -->
+    <section id="built">
+      <div class="chapter-head"><span class="num">05</span><h2>What got built</h2></div>
+      <p class="dek">The seven-file skeleton became a full stack. Every new or changed file, and why it exists.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th></th><th>File</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>11-kafka.yaml</code></td><td>Single-broker KRaft StatefulSet — the piece the old manifests skipped entirely</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>21…25-*.yaml</code></td><td>The five stage consumers as Deployments — mapping, normalization, validation, resolution, golden</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>30/31-review-console*.yaml</code></td><td>The console + Service, and an Ingress <i>deliberately left out of kustomize's resource list</i> — it puts personal data on a public IP and needs a real hostname first</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>40/41/42-*.yaml</code></td><td>Prometheus, Alertmanager, Grafana — each with its own PVC and provisioning ConfigMaps</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>14-postgres-backup.yaml</code></td><td>Nightly <code>pg_dump</code> CronJob, verified with <code>pg_restore --list</code> before it reports success — the gap ADR 0016 had named and deferred</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>infra/k8s/monitoring/prometheus.yml</code></td><td>The cluster's own scrape config — one line differs from Compose's: a Kubernetes Service name can't contain the underscore in <code>review_console</code></td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>infra/scripts/build-and-push.sh</code></td><td>Builds and pushes all 8 images to any registry — takes <code>REGISTRY=</code>, names no cloud</td></tr>
+            <tr><td><span class="tag tag--new">new</span></td><td><code>docs/decisions/0021-*.md</code></td><td>The ADR recording this whole decision, superseding 0016's stale Kafka/scope claims</td></tr>
+            <tr><td><span class="tag tag--mod">rewrote</span></td><td><code>infra/kustomization.yaml</code></td><td>Added <code>configMapGenerator</code> entries wiring Prometheus rules, Alertmanager templates, Grafana dashboards from the same files Compose already mounts</td></tr>
+            <tr><td><span class="tag tag--fix">modified</span></td><td><code>services/review_console/Dockerfile</code></td><td>Bakes <code>tools/</code> in — the Operations tab reads <code>/tools/sql/verify.sql</code>, which Compose supplied as a bind mount a scheduled pod doesn't have</td></tr>
+            <tr><td><span class="tag tag--fix">modified</span></td><td><code>20-watcher.yaml</code></td><td>Added the heartbeat liveness probe Compose's healthcheck already had — a wedged watcher used to look "Running" forever</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><code>enrichment</code> and <code>ingestion</code> stayed CLI-only, invoked with <code>kubectl run</code> the way Compose already ran them with <code>docker compose run</code> — nothing needs them running continuously.</p>
+    </section>
+
+    <!-- 06 THE MONEY PROBLEM -->
+    <section id="money">
+      <div class="chapter-head"><span class="num">06</span><h2>The money problem</h2></div>
+      <p class="dek">Free-trial credit, a stray college-project VM already burning it, and a 4-vCPU wall in the region I picked first.</p>
+
+      <h3>The typo that mattered</h3>
+      <p>The plan changed twice on one number. First: <em>"i think we have 16 left"</em> — read as ₹16, which would buy under half an hour against a two-node default. Then the correction: ₹16,000 — the standard Azure free-trial grant. Both readings had to be taken seriously in the moment; only one turned out true, and the whole sizing plan below is built for it.</p>
+
+      <h3>An old VM was already spending it</h3>
+      <p>Before creating anything, a full resource inventory turned up something unexpected: <code>web-server-vm</code>, a <code>Standard_B2as_v2</code> instance in resource group <code>azure-mini-project-rg</code>, running continuously since <b>2026-08-06</b> — nineteen days — with a static public IP and a Premium_LRS disk attached. A leftover from an earlier college project, still billing.</p>
+      <div class="statgrid">
+        <div class="statgrid__item"><div class="v">19 days</div><div class="l">already running</div></div>
+        <div class="statgrid__item"><div class="v">~₹5–6k</div><div class="l">projected monthly cost</div></div>
+        <div class="statgrid__item"><div class="v">~₹3–3.5k</div><div class="l">already spent</div></div>
+        <div class="statgrid__item"><div class="v">2 vCPU</div><div class="l">quota it was holding</div></div>
+      </div>
+      <p>Asked directly — deallocate (reversible, keeps the disk) or delete the whole resource group (permanent) — the answer was delete. <code>az group delete --name azure-mini-project-rg --yes</code> removed the VM, its disk, its static IP, its network, everything. The region's vCPU usage measured 2 used before, 0 after: confirmation the deletion actually freed the quota it was consuming, independent of exactly which metadata field said which region.</p>
+
+      <h3>The 4-vCPU wall</h3>
+      <p>Every Azure free-trial subscription caps regional vCPU quota at <b>4</b>. That number decided the node size before anything else did.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Region</th><th>Quota (used/limit)</th><th>4-vCPU general-purpose sizes available</th></tr></thead>
+          <tbody>
+            <tr><td>centralindia</td><td class="num">0/4 <span style="color:var(--ink-faint)">(after cleanup)</span></td><td>None — <code>D4s_v5</code> and <code>D4as_v5</code> both flagged <code>NotAvailableForSubscription</code>; only confidential-compute and GPU sizes were unrestricted</td></tr>
+            <tr><td>eastus</td><td class="num">0/4</td><td><code>Standard_D4s_v7</code> — 4 vCPU / 16 GiB, unrestricted, 12 attachable disks</td></tr>
+            <tr><td><b>southindia</b></td><td class="num">0/4</td><td><code>Standard_D4as_v5</code> and several others, all unrestricted — <b>chosen</b>, 8 attachable disks</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>southindia won over eastus for one reason beyond availability: it keeps the data in India. The stack claims exactly <b>7</b> PersistentVolumeClaims against that size's 8-disk ceiling — comfortable, but the note is now in two files so nobody adds an eighth stateful thing without counting first.</p>
+
+      <h3>Sizing the single node</h3>
+      <p>One node instead of two smaller ones, deliberately: two nodes waste more of the total on kubelet/system overhead, 16 GiB in one place beats an 8+8 split for Kafka and Prometheus specifically, and — the real payoff — <b>a single node makes the shared-volume problem disappear</b>. Both pods that write <code>/data</code> (the watcher and the console's upload handler) land on the same node by definition, so the ReadWriteMany requirement, and Azure Files with it, was never actually needed. <code>deploy/azure-trial</code> patches the volume back to <code>ReadWriteOnce</code> on the plain <code>managed-csi</code> disk class.</p>
+      <div class="proscons">
+        <div class="pros">
+          <h5>Single node — what it bought</h5>
+          <ul>
+            <li>Fits the 4-vCPU quota exactly, no waiting on a quota increase</li>
+            <li>ReadWriteOnce works — one fewer unverified storage path</li>
+            <li>Fully provable at close to zero infra spend beyond the node itself</li>
+            <li><code>az aks stop</code> cleanly parks it between sessions</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h5>Single node — what it costs</h5>
+          <ul>
+            <li>Zero high availability — a node reboot is a full outage</li>
+            <li>Never exercises the ReadWriteMany path a real multi-node deploy needs</li>
+            <li>Only 1 of 8 disk slots spare</li>
+            <li>Requests were sized tight: 1,850m CPU / 4.4 GiB against ~3,860m / ~11.5 GiB allocatable</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 CLUSTER RUN -->
+    <section id="cluster">
+      <div class="chapter-head"><span class="num">07</span><h2>Standing it up</h2></div>
+      <p class="dek">The script worked — but the first run aborted itself, and the reason is worth keeping.</p>
+
+      <h3>A script that looked hung wasn't</h3>
+      <p>The first live run of <code>deploy/azure/create-cluster.sh</code> sat silent for over two minutes on an <code>az vm list-skus</code> call — downloading roughly 750 VM sizes to confirm the requested one was actually offered. With no progress output, that silence read as a hang. Keystrokes typed into the wait — the <code>pcdf</code> confirmation, typed early — sat buffered in the terminal. When the real prompt finally appeared, it consumed a stray blank line first, didn't match, and aborted with nothing created; the leftover <code>pcdf</code> then landed on the shell as a bogus command.</p>
+      <p>Measured directly: that one call took <b>136.6 seconds</b>, consistently. The fix wasn't to make it faster — it's an Azure API, not ours to speed up — it was to stop pretending the wait wasn't happening.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Before</th><th>After</th></tr></thead>
+          <tbody>
+            <tr><td>No output during the ~2 min SKU/quota checks</td><td><code>echo</code> before each slow call: "checking… this takes a minute or two"</td></tr>
+            <tr><td>Confirmation read whatever was buffered, once</td><td>Stray input drained (<code>read -t 0.05</code> loop) immediately before the real prompt</td></tr>
+            <tr><td>One wrong keystroke → abort, nothing created</td><td>Three attempts before giving up, each a fresh prompt</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The run that worked</h3>
+      <pre><span class="cmt">$</span> sh deploy/azure/create-cluster.sh
+checking resource providers...
+checking Standard_D4as_v5 is available in southindia (this takes a minute or two)...
+checking vCPU quota in southindia...
+<span class="okline">quota ok: 4 of 4 free vCPUs in southindia</span>
+
+  resource group  pcdf  (southindia)
+  registry        pcdfc3de8ccf  (Basic)
+  cluster         pcdf-aks  (1 x Standard_D4as_v5)
+
+Type 'pcdf' to continue (Ctrl-C to stop): pcdf
+<span class="okline">resource group pcdf created
+registry pcdfc3de8ccf created
+cluster pcdf-aks created</span>
+Merged "pcdf-aks" as current context in ~/.kube/config</pre>
+      <p>Two Azure resource providers — <code>Microsoft.ContainerService</code> and <code>Microsoft.ContainerRegistry</code> — came back <code>NotRegistered</code> on this subscription and were registered as part of the same preflight (free, one-time, a few minutes). An SSH keypair was auto-generated at <code>~/.ssh/id_rsa</code> as a side effect of node creation. <code>kubectl</code>'s context was merged automatically.</p>
+
+      <h3>What the node actually had</h3>
+      <p>The allocatable capacity, once system pods took their share, landed almost exactly where the sizing math predicted:</p>
+      <div class="statgrid">
+        <div class="statgrid__item"><div class="v">3,860m</div><div class="l">CPU allocatable</div></div>
+        <div class="statgrid__item"><div class="v">11.5 GiB</div><div class="l">memory allocatable</div></div>
+        <div class="statgrid__item"><div class="v">1,850m</div><div class="l">CPU requested (14 workloads)</div></div>
+        <div class="statgrid__item"><div class="v">4.4 GiB</div><div class="l">memory requested</div></div>
+      </div>
+      <p>Build-and-push ran in the background from there — all 8 images, roughly 20 minutes on a normal connection — while the namespace, secrets, and manifests went in on top. Postgres and Kafka started before the first images even finished pushing, since both use unmodified public images.</p>
+    </section>
+
+    <!-- 08 WHAT EXISTS IN AZURE -->
+    <section id="resources">
+      <div class="chapter-head"><span class="num">08</span><h2>What actually exists in Azure</h2></div>
+      <p class="dek">Fourteen real objects, sitting in two resource groups — not one. Every single thing that was created, and the plain reason each one is there.</p>
+
+      <div class="callout callout--info">
+        <span class="callout__glyph">i</span>
+        <div>Pulled directly from the live subscription while writing this section — not recalled from memory. <code>az resource list</code>, run twice, against both resource groups.</div>
+      </div>
+
+      <h3>The resource group holds less than you'd expect</h3>
+      <p>Open the Azure Portal and look inside <code>pcdf</code> — the one resource group this project asked for by name — and exactly two things are in it: the AKS cluster object, and the container registry. That's the whole list.</p>
+      <p>Everything the cluster actually needs to <i>run</i> — the virtual machine, its disks, the network, the load balancer, the identity that lets it pull images — lives in a second resource group Azure created on its own and named itself: <code>MC_pcdf_pcdf-aks_southindia</code> ("MC" for <i>managed cluster</i>). This isn't something asked for, and it isn't unique to this project — every AKS cluster on every Azure subscription does this. The split is deliberate: <code>pcdf</code> is the thing managed directly — start it, stop it, delete it, resize it. <code>MC_...</code> is Azure's own workshop, rebuilt automatically any time the cluster's shape changes, and not meant to be edited by hand.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout__glyph">!</span>
+        <div><b>Why this matters for the bill:</b> deleting only <code>pcdf</code> — without knowing the second group exists — is a common way people think they've cleaned up and haven't. The good news: <code>az group delete --name pcdf --yes</code> already does the right thing. Deleting the AKS cluster object triggers Azure to tear down the entire <code>MC_...</code> group behind it automatically. One command, both groups gone — but it's worth knowing where the second one is, since nearly everything in the cost table further down actually lives there.</div>
+      </div>
+
+      <h3>Every object, and why it's there</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Lives in</th><th>Resource</th><th>Azure calls it</th><th>Why it exists</th></tr></thead>
+          <tbody>
+            <tr><td><code>pcdf</code></td><td>pcdf-aks</td><td>Managed cluster</td><td>The Kubernetes control plane — API server, scheduler, everything that decides where a pod runs. Free tier; costs nothing by itself.</td></tr>
+            <tr><td><code>pcdf</code></td><td>pcdfc3de8ccf</td><td>Container registry</td><td>Where the 8 built Docker images live, ready for the cluster to pull.</td></tr>
+            <tr><td><code>MC_...</code></td><td>aks-nodepool1-…-vmss</td><td>VM scale set</td><td>The one real computer everything runs on — 4 vCPU, 16 GiB. The only thing <code>az aks stop</code> actually switches off.</td></tr>
+            <tr><td><code>MC_...</code></td><td>pcdf-aks-agentpool</td><td>Managed identity</td><td>An identity badge the node carries instead of a password — lets it pull from the registry above with no credential stored anywhere.</td></tr>
+            <tr><td><code>MC_...</code></td><td>aks-vnet-…</td><td>Virtual network</td><td>The private network the node and every pod live on.</td></tr>
+            <tr><td><code>MC_...</code></td><td>aks-agentpool-…-nsg</td><td>Network security group</td><td>The firewall rules attached to that network.</td></tr>
+            <tr><td><code>MC_...</code></td><td>kubernetes</td><td>Load balancer</td><td>Handles the cluster's own outbound internet access — created automatically even though nothing here exposes a public <code>LoadBalancer</code>-type Service.</td></tr>
+            <tr><td><code>MC_...</code></td><td>cd133ff2-…</td><td>Public IP (Standard)</td><td>The one static address that load balancer answers on.</td></tr>
+            <tr><td><code>MC_...</code></td><td>7 × <code>pvc-…</code></td><td>Managed disks</td><td>The actual data — one disk per PersistentVolumeClaim. Postgres 20 GiB, Kafka 10 GiB, backups 20 GiB, Prometheus 20 GiB, the shared <code>/data</code> folder 10 GiB, Grafana 2 GiB, Alertmanager 1 GiB. <b>83 GiB total.</b></td></tr>
+            <tr><td><code>MC_...</code></td><td><i>(the node's own disk)</i></td><td>OS disk, 128 GiB Premium SSD</td><td>Comes bundled with the virtual machine itself rather than showing up as its own line in most listings — confirmed directly via <code>az aks nodepool show</code>. The single largest disk in the whole deployment, and the easiest one to forget about.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The simplest way to picture it</h3>
+      <p>Think of it as a small rented office rather than a server. <code>pcdf</code> is the lease and the sign by the front desk — the thing with a name on it. <code>MC_pcdf_pcdf-aks_southindia</code> is the actual room Azure built inside that building: one desk (the node) doing the real work, seven filing cabinets (the disks) holding what has to survive even if the desk gets cleared out, a supply closet down the hall (the registry) stocked with pre-built shipping containers (the 8 images) the desk pulls from whenever it needs to set something up, a front door with a mail slot (the load balancer and its IP) so traffic can get in and out, and an ID badge (the managed identity) that lets the desk walk into that supply closet without anyone having to cut it a key.</p>
+      <p>Stopping the cluster is like sending the one person at that desk home for the night. The room, the filing cabinets, the mail slot, and the supply closet all stay exactly as they were — and every one of them keeps costing something small, every single day, whether anyone's sitting at the desk or not.</p>
+
+      <h3>The cost estimate, corrected</h3>
+      <p>Earlier in this document the residual cost while stopped was priced at roughly ₹120–200/month — that number only counted the seven data disks, and priced even those too low. With the fuller picture above, accounting for the node's own 128&nbsp;GiB disk and the load balancer's static IP — both of which exist and bill independently of whether the node is running — the honest number is closer to the table below.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Item</th><th>Est. monthly</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td>7 data disks (83 GiB, Standard SSD)</td><td class="num">~₹450–600</td><td>Postgres, Kafka, Prometheus, Grafana, Alertmanager, backups, shared data</td></tr>
+            <tr><td>Node's own OS disk (128 GiB, Premium SSD)</td><td class="num">~₹700–850</td><td>Not a PVC — bundled with the node, easy to miss</td></tr>
+            <tr><td>1 static public IP (Standard SKU)</td><td class="num">~₹250–300</td><td>Bills hourly regardless of traffic — a Standard IP isn't free-when-idle the way Basic is</td></tr>
+            <tr><td>Container registry (Basic tier)</td><td class="num">~₹400–450</td><td>Flat monthly fee, not per-image</td></tr>
+            <tr><td>AKS control plane</td><td class="num">₹0</td><td>Free tier</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Roughly <b>₹1,800–2,200/month</b> while fully stopped — an estimate from standard Azure India list pricing for these tiers, not a bill; <i>Portal → Cost Management → Cost analysis</i> has the authoritative figure. Against ₹16,000 of remaining credit that's still 7–9 months of doing nothing before it matters, just nowhere near the near-zero figure quoted earlier. It's also the number that makes actually running <code>az group delete --name pcdf --yes</code> (§13) worth doing, once this is genuinely done rather than paused.</p>
+    </section>
+
+    <!-- 09 BUGS -->
+    <section id="bugs">
+      <div class="chapter-head"><span class="num">09</span><h2>Six bugs, six fixes</h2></div>
+      <p class="dek">Every one of these surfaced only once real pods hit real Azure infrastructure — no amount of rendering the YAML would have caught them. None is Azure-specific; every one would break identically on any Kubernetes cluster.</p>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">1</span><span class="incident__title">The secret mount blocked Kubernetes' own service-account token</span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd><code>mkdirat ... read-only file system</code> — every pod mounting a secret died before any application code ran</dd></div>
+            <div class="incident__row"><dt>Root cause</dt><dd>The secret volume mounts at <code>/run/secrets</code>. On Linux, <code>/var/run</code> is a symlink to <code>/run</code>. Kubernetes tries to auto-mount its service-account token at <code>/var/run/secrets/kubernetes.io/serviceaccount</code> — which meant creating a directory <i>inside</i> a mount already marked read-only. It couldn't.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd><code>automountServiceAccountToken: false</code>, added to 9 manifests. Correct on its own terms too — nothing in this stack calls the Kubernetes API.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>Pure Linux path-symlink mechanics. Identical on any distro, any cluster.</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">2</span><span class="incident__title">Kafka refused to start on <code>lost+found</code></span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd><code>Found directory /var/lib/kafka/data/lost+found ... should only contain Kafka topic data</code> — fatal, broker exits immediately</dd></div>
+            <div class="incident__row"><dt>Root cause</dt><dd>A PersistentVolume arrives as a freshly formatted ext4 filesystem, and every ext4 volume has a <code>lost+found</code> directory at its root. Kafka demands its log directory contain nothing but topic-partition data.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd><code>KAFKA_LOG_DIRS</code> pointed at a subdirectory of the mount instead of the mount root.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>Docker Compose never hit this because a bind-mounted volume is a directory on an already-formatted host filesystem, not a fresh one. Any cloud's block storage formats the same way.</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">3</span><span class="incident__title">Kafka couldn't resolve its own controller — twice</span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd><code>java.net.UnknownHostException: kafka-0.kafka: Name does not resolve</code></dd></div>
+            <div class="incident__row"><dt>Root cause (part one)</dt><dd><code>KAFKA_CONTROLLER_QUORUM_VOTERS</code> names the broker as <code>kafka-0.kafka</code> — a per-pod DNS name that only exists when the governing Service is <b>headless</b>. It was a plain ClusterIP Service.</dd></div>
+            <div class="incident__row"><dt>Root cause (part two)</dt><dd>Making it headless exposed a deadlock: a headless Service publishes DNS only for pods already marked Ready — and the broker can't become Ready until it resolves its own controller address.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd><code>clusterIP: None</code> plus <code>publishNotReadyAddresses: true</code>. Safe here specifically because there's one broker — "an address that might not be ready" is the only address there is.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>Pure Kubernetes DNS/Service semantics, identical on every distribution.</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">4</span><span class="incident__title">The migrate Job gave up too early</span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd>Job status permanently <code>Failed</code> — required manual delete and recreate before it would try again</dd></div>
+            <div class="incident__row"><dt>Root cause</dt><dd><code>backoffLimit: 3</code> expires roughly a minute in. On a cold cluster, that's exactly the window where Postgres is still attaching its disk and running <code>initdb</code> — so the "database not reachable yet" case, which is normal, was being treated as permanent failure.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd>Raised to <code>backoffLimit: 10</code>. Costs nothing when the schema's already current — the first attempt just succeeds.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>Any cold Kubernetes cluster races a dependent Job against a StatefulSet's first boot the same way.</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">5</span><span class="incident__title">The shared data volume was unwritable</span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd><code>mkdir: cannot access '/data/inbox': Permission denied</code> — the watcher couldn't create the directory it exists to watch</dd></div>
+            <div class="incident__row"><dt>Root cause</dt><dd>Every image here runs as non-root uid 10001. A fresh PersistentVolume arrives owned by <code>root</code>.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd><code>securityContext.fsGroup: 10001</code> on the watcher and console pod specs — the kubelet then hands the volume over group-writable.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>Docker Compose never hit this either — a bind mount inherits the ownership of a host directory the developer already owns.</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="incident">
+        <div class="incident__head"><span class="incident__num">6</span><span class="incident__title">A carriage return hid inside the Postgres password</span></div>
+        <div class="incident__body">
+          <dl>
+            <div class="incident__row"><dt>Symptom</dt><dd>The backup CronJob failed with <code>password authentication failed for user "pcdf_dev"</code> — while the application connected to the exact same database with the exact same password, successfully, the whole time</dd></div>
+            <div class="incident__row"><dt>Root cause</dt><dd><code>openssl rand</code> on Git Bash / MSYS emits CRLF line endings, not LF. <code>tr -d '\n'</code> stripped the newline but left the carriage return sitting inside the value — a 33-byte password where 32 was intended. Postgres initialized with that byte baked in via the mounted file; the application read the identical file and matched perfectly. Only the backup Job, which receives the value through an environment variable instead of reading the file, disagreed.</dd></div>
+            <div class="incident__row"><dt>Fix</dt><dd>Regenerated every credential with <code>tr -d '\r\n'</code>, confirmed clean with <code>od -c</code>, applied the new password with <code>ALTER USER</code> directly against Postgres, replaced the Kubernetes Secret, restarted every pod that reads it.</dd></div>
+            <div class="incident__row"><dt>Why it's not Azure-specific</dt><dd>A Windows-shell quirk in credential generation, not a cluster issue at all — but the one bug here that stayed silent longest, because the "obvious" check (does the app connect?) said everything was fine.</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 PROOF -->
+    <section id="proof">
+      <div class="chapter-head"><span class="num">10</span><h2>Proof it works</h2></div>
+      <p class="dek">Not "the pods say Running" — an actual file, dropped twice, at two different points in time, verified against the database both times.</p>
+
+      <div class="card card--verified">
+        <div class="card__label">Test 1 — first end-to-end run</div>
+        <h4>A 5-row company CSV, with a deliberate near-duplicate</h4>
+        <p style="margin-top:.5rem">"Northwind Traders" and "Northwind Traders Ltd" were planted in the same file on purpose — the whole point of entity resolution is catching exactly this.</p>
+        <pre>batch started for smoke_companies.csv
+derived a new mapping for 5 column(s)
+<span class="okline">read 5, processed 5, failed 0, quarantined 0, linked 1, new 4</span></pre>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Field</th><th>Value</th><th>Confidence</th><th>Competing</th></tr></thead>
+          <tbody>
+            <tr><td>company_name</td><td>Northwind Traders Ltd</td><td class="num">0.400</td><td class="num">2</td></tr>
+            <tr><td>company_name</td><td>Northwind Traders</td><td class="num">0.500</td><td class="num">1</td></tr>
+            <tr><td>employee_count</td><td>245</td><td class="num">0.400</td><td class="num">2</td></tr>
+            <tr><td>employee_count</td><td>240</td><td class="num">0.500</td><td class="num">1</td></tr>
+          </tbody>
+        </table></div>
+        <p>The duplicate was <b>linked</b>, not duplicated — 5 raw records became 4 entities — and both name variants and both employee counts survive side by side. Nothing overwritten.</p>
+      </div>
+
+      <div class="card card--verified">
+        <div class="card__label">Test 2 — a real 510&nbsp;KB upload, through the console UI</div>
+        <h4>The upload path, not the watch-folder path</h4>
+        <p style="margin-top:.5rem">Uploaded through the browser's Intake tab rather than dropped into a watched folder — a different code path (<code>uploads.py</code> → <code>/data/inbox/uploads</code>) than Test 1 exercised.</p>
+        <div class="statgrid">
+          <div class="statgrid__item"><div class="v">1,004</div><div class="l">raw records</div></div>
+          <div class="statgrid__item"><div class="v">816</div><div class="l">entities resolved</div></div>
+          <div class="statgrid__item"><div class="v">51,973</div><div class="l">observations (every cell)</div></div>
+          <div class="statgrid__item"><div class="v">11,473</div><div class="l">golden values</div></div>
+          <div class="statgrid__item"><div class="v">0</div><div class="l">quarantined</div></div>
+        </div>
+      </div>
+
+      <div class="card card--verified">
+        <div class="card__label">Backup, verified twice</div>
+        <h4><code>pg_dump</code> → <code>pg_restore --list</code>, not just "the Job said success"</h4>
+        <pre>dumping pcdf -> /backups/pcdf-20260825T105126Z.dump
+verifying archive is readable
+<span class="okline">ok: /backups/pcdf-20260825T105126Z.dump (3.6M, 26 tables with data)</span></pre>
+        <p>Run once against the small test dataset (108&nbsp;KB) and again after the 510&nbsp;KB upload (3.6&nbsp;MB) — both times the archive was independently confirmed readable, not just "written."</p>
+      </div>
+
+      <div class="card card--verified">
+        <div class="card__label">A fresh re-check, on request</div>
+        <h4>Not a re-read of old state — a brand-new file, dropped live, right before answering "is it good to go"</h4>
+        <p style="margin-top:.5rem">Node: Ready, 599m/3,860m CPU (15%), 2.6/12 GiB memory (22%). 12/12 pods, <b>zero restarts</b> since the deploy finished. Then, rather than trust that: a new one-row CSV was dropped into a brand-new watch feed and traced end to end.</p>
+        <pre>feed livecheck: processing probe.csv
+<span class="okline">read 1, processed 1, failed 0, quarantined 0, linked 0, new 1</span></pre>
+        <p>Confirmed in Postgres by name. Backup re-run once more — succeeded again. That's the basis for the "good to go" verdict, not a status page reading green.</p>
+      </div>
+    </section>
+
+    <!-- 10 CREDENTIALS -->
+    <section id="creds">
+      <div class="chapter-head"><span class="num">11</span><h2>Two credentials that don't rotate the easy way</h2></div>
+      <p class="dek">Changing the Kubernetes Secret is not the same as changing the password — for exactly two components, and for the same underlying reason.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout__glyph">!</span>
+        <div>Both Postgres and Grafana read their admin credential from the environment <b>only once</b> — the moment they first initialize their own storage. After that, the credential lives inside their own database, and a changed Secret is silently ignored.</div>
+      </div>
+
+      <h3>Postgres</h3>
+      <p><code>POSTGRES_PASSWORD_FILE</code> is read only during <code>initdb</code>, on the very first start against an empty volume. Rotating it afterward means going through Postgres itself:</p>
+      <pre><span class="cmt"># set the new password inside the database</span>
+kubectl exec -n pcdf postgres-0 -- psql -U pcdf_dev -d pcdf \
+  -c "ALTER USER pcdf_dev PASSWORD 'the-new-value';"
+
+<span class="cmt"># then update the Secret to match, and restart everything that reads it</span>
+kubectl rollout restart deploy -n pcdf</pre>
+
+      <h3>Grafana</h3>
+      <p><code>GF_SECURITY_ADMIN_PASSWORD</code> is read only when Grafana first creates <code>grafana.db</code> on its volume. The symptom is deceptively clean: "Invalid username or password," while holding what is demonstrably the correct value.</p>
+      <pre>GP=$(kubectl get pod -n pcdf -l app=grafana -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n pcdf "$GP" -- grafana cli --homepath /usr/share/grafana \
+  admin reset-admin-password 'the-new-value'
+<span class="okline">Admin password changed successfully ✔</span></pre>
+
+      <p>Everything else — the five consumers, the watcher, the console — has no such quirk: they read the mounted secret file fresh at every startup, so a plain restart is all any of them need.</p>
+    </section>
+
+    <!-- 11 QUERIES -->
+    <section id="queries">
+      <div class="chapter-head"><span class="num">12</span><h2>Getting data out</h2></div>
+      <p class="dek">Five tested queries live in <code>tools/sql/companies.sql</code>. The one trap that will silently give wrong answers if missed:</p>
+
+      <div class="callout callout--warn">
+        <span class="callout__glyph">!</span>
+        <div><code>golden_attribute</code> keeps every value it ever chose — superseded rows stay in the table rather than being deleted. Every query needs <code>WHERE valid_to IS NULL</code>, or the "current" value and its whole history come back mixed together.</div>
+      </div>
+
+      <h3>Companies as a flat table</h3>
+      <pre>SELECT
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'company_name')   AS company_name,
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'website')        AS website,
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'industry')       AS industry,
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'city')           AS city,
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'country')        AS country,
+    MAX(g.value) FILTER (WHERE g.canonical_field = 'employee_count') AS employee_count
+FROM entity e
+JOIN golden_attribute g ON g.entity_id = e.entity_id AND g.valid_to IS NULL
+WHERE e.entity_type = 'company' AND e.status = 'active'
+GROUP BY e.entity_id
+ORDER BY company_name
+LIMIT 50;</pre>
+
+      <h3>Run the whole reference file</h3>
+      <pre>kubectl exec -i -n pcdf postgres-0 -- psql -U pcdf_dev -d pcdf < tools/sql/companies.sql</pre>
+      <p>The file also has: a full provenance trace for one entity (which vendor, which file, which column, which raw cell won each field); search-by-name; every field where sources disagreed (<code>competing_values &gt; 1</code>); and every value ever reported for one field — winners <i>and</i> losers together, which is the reason this system exists at all.</p>
+    </section>
+
+    <!-- 12 STATE -->
+    <section id="state">
+      <div class="chapter-head"><span class="num">13</span><h2>Where it stands right now</h2></div>
+      <p class="dek">Stopped, not deleted — a deliberate choice between two real options.</p>
+
+      <div class="proscons">
+        <div class="pros">
+          <h5>Stop — chosen</h5>
+          <ul>
+            <li>Compute billing drops to zero within minutes</li>
+            <li>All 816 entities, every fix, every manifest survives untouched</li>
+            <li><code>az aks start</code> returns to exactly this state in 2–5 minutes — no redeploy</li>
+            <li>Residual cost stays small: disks + registry only</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h5>Delete — the alternative</h5>
+          <ul>
+            <li>Zero cost, full stop, nothing left to forget about</li>
+            <li>Loses all 816 resolved entities immediately</li>
+            <li>Every one of the six bugs would have to be re-discovered live next time — the fixes live in the manifests now, so it's a repeat run, not repeat debugging, but still a from-scratch cluster</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>Cost while stopped</h3>
+      <p>Node compute is the only thing <code>az aks stop</code> actually switches off — from ~₹14/hr down to ₹0. Everything else that was created keeps existing and keeps billing at a small, steady rate: the seven data disks, the node's own 128&nbsp;GiB disk, the load balancer's static IP, and the registry. <b>§08</b> has the full object-by-object breakdown and the reasoning behind each line; the total lands around <b>₹1,800–2,200/month</b> while parked exactly like this.</p>
+      </div>
+
+      <h3>Bring it back</h3>
+      <pre>az aks start --name pcdf-aks --resource-group pcdf</pre>
+
+      <h3>Reach it once it's running</h3>
+      <pre>kubectl port-forward -n pcdf svc/review-console 8000:8000   <span class="cmt"># localhost:8000/admin/page</span>
+kubectl port-forward -n pcdf svc/grafana 3000:3000
+kubectl port-forward -n pcdf svc/prometheus 9090:9090</pre>
+
+      <h3>Tear it down completely</h3>
+      <pre>az group delete --name pcdf --yes</pre>
+    </section>
+
+    <!-- 13 LIMITS -->
+    <section id="limits">
+      <div class="chapter-head"><span class="num">14</span><h2>What's not proven</h2></div>
+      <p class="dek">Everything above is real and tested. This is what wasn't — stated plainly, on purpose.</p>
+      <ul class="prose">
+        <li><b>No high availability, anywhere.</b> One node means a reboot is a full outage. Postgres is a single instance with no standby; real failover needs streaming replication (Patroni, CloudNativePG), and that's not built.</li>
+        <li><b>ReadWriteMany was never exercised.</b> The trial overlay deliberately bypasses it by keeping both writer pods on one node. A real multi-node deployment needs that path proven separately.</li>
+        <li><b>The backup CronJob has only run on demand.</b> It's fired manually twice, successfully, but never yet on its actual 02:00 UTC schedule unattended.</li>
+        <li><b>No public Ingress is applied.</b> The console is reachable only through <code>kubectl port-forward</code>, which is deliberate — it holds personal data with full provenance, and the Ingress template needs a real hostname and certificate issuer before it's safe to apply.</li>
+        <li><b>Image builds still happen on a local machine.</b> <code>docker build</code> runs locally, then pushes to ACR — a rebuild needs this machine specifically, unless that step moves to <code>az acr build</code> later.</li>
+      </ul>
+    </section>
+
+    <!-- 14 REFERENCE -->
+    <section id="reference">
+      <div class="chapter-head"><span class="num">15</span><h2>Full reference</h2></div>
+
+      <h3>Command cheat-sheet</h3>
+      <div class="cmdlist">
+        <div><p class="caption">Everything's status, at a glance</p><pre>kubectl get pods,pvc -n pcdf</pre></div>
+        <div><p class="caption">Read logs from any component</p><pre>kubectl logs -n pcdf deploy/&lt;name&gt; --tail=30</pre></div>
+        <div><p class="caption">Drop a file into a watch feed</p><pre>WP=$(kubectl get pod -n pcdf -l app=watcher -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n pcdf "$WP" -- mkdir -p /data/inbox/watch/my-feed
+cat export.csv | kubectl exec -i -n pcdf "$WP" -- sh -c 'cat &gt; /data/inbox/watch/my-feed/export.csv'</pre></div>
+        <div><p class="caption">Run the backup on demand</p><pre>kubectl create job --from=cronjob/postgres-backup backup-now -n pcdf</pre></div>
+        <div><p class="caption">Read the API keys back</p><pre>kubectl get secret pcdf-secrets -n pcdf -o jsonpath='{.data.pcdf_api_keys}' | base64 -d</pre></div>
+      </div>
+
+      <h3>Glossary</h3>
+      <dl class="glossary">
+        <dt>AKS</dt><dd>Azure Kubernetes Service — the managed control plane; the two node it runs on are the only real Azure compute here.</dd>
+        <dt>ACR</dt><dd>Azure Container Registry — where the 8 built images live (<code>pcdfc3de8ccf.azurecr.io</code>).</dd>
+        <dt>KRaft</dt><dd>Kafka's own consensus mode — no separate ZooKeeper cluster needed.</dd>
+        <dt>PVC</dt><dd>PersistentVolumeClaim — a pod's request for a slice of disk; 7 exist here.</dd>
+        <dt>Kustomize</dt><dd>Config-layering tool: a base plus overlays, no templating language.</dd>
+        <dt>ADR</dt><dd>Architecture Decision Record — this journey's formal write-up lives in <code>docs/decisions/0021</code>.</dd>
+        <dt>Golden record</dt><dd>The one trusted value per entity per field, chosen by survivorship rules, with every value it beat kept alongside it.</dd>
+      </dl>
+
+      <hr class="rule">
+      <p class="prose" style="color:var(--ink-faint); font-size:.85rem;">Cluster: <code>pcdf-aks</code> · Resource group: <code>pcdf</code> · Region: <code>southindia</code> · Registry: <code>pcdfc3de8ccf.azurecr.io</code> · Node: 1× <code>Standard_D4as_v5</code> · Subscription tier: Azure free trial. Written from the full build session — every command, every error string, and every number above was run and read directly off a live cluster, not recalled from memory.</p>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  <span>PCDF on AKS — build log</span>
+  <span>Compiled 2026-08-25</span>
+</footer>
+
+<script>
+(function(){
+  var toc = document.getElementById('toc');
+  var toggle = document.getElementById('navtoggle');
+  if(toggle){
+    toggle.addEventListener('click', function(){
+      var open = toc.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.textContent = open ? 'Contents ▴' : 'Contents ▾';
+    });
+  }
+
+  var links = Array.prototype.slice.call(toc.querySelectorAll('a[href^="#"]'));
+  var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+
+  if('IntersectionObserver' in window && sections.length){
+    var byId = {};
+    links.forEach(function(a){ byId[a.getAttribute('href').slice(1)] = a; });
+
+    var current = null;
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if(entry.isIntersecting){
+          var id = entry.target.id;
+          if(current) current.classList.remove('active');
+          current = byId[id];
+          if(current) current.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+
+    sections.forEach(function(s){ io.observe(s); });
+  }
+
+  links.forEach(function(a){
+    a.addEventListener('click', function(){
+      if(window.matchMedia('(max-width: 880px)').matches){
+        toc.classList.remove('open');
+        toggle.setAttribute('aria-expanded','false');
+        toggle.textContent = 'Contents ▾';
+      }
+    });
+  });
+})();
+</script>

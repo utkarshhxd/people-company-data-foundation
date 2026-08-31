@@ -27,7 +27,9 @@ New here? Read [Getting started](docs/guides/getting-started.md) first, then
 | [Pipeline dashboard](docs/guides/dashboard.md) | Batch progress and how far records got, in a browser — `/admin/page` combines this with the review queues in one tabbed page |
 | [AI assistance](docs/guides/ai-assistance.md) | The local-model fallback for schema mapping, and the batch enrichment job |
 | [Watched feeds](data/inbox/watch/README.md) | Drop a file, it loads itself |
+| [Serving an application](docs/guides/serving-projection.md) | Projecting the golden record onto the app database that displays it |
 | [Operations](docs/guides/operations.md) | Backup/restore, CI, tests, `tools/` |
+| [Deploying to a cluster](infra/k8s/README.md) | Running this on Kubernetes instead of one machine — and on Azure specifically |
 | [Runbook](docs/runbook.md) | What to do when something is wrong |
 
 Every design decision is written down in [`docs/decisions/`](docs/decisions/)
@@ -40,6 +42,7 @@ what the code actually does today.
 docker-compose.yml       postgres, kafka, migrate job, five stage consumers,
                          the watcher, the review console
 db/migrations/           numbered .sql migrations, applied by `migrate`
+db/serving/              what the display app's schema must look like, applied by hand
 libs/common/             settings, db, migration runner, canonical schema
 
 services/record_pipeline/  the automatic path: one record, start to finish
@@ -52,9 +55,15 @@ services/resolution/       link records to a stable person_id / company_id
 services/golden/           one trusted value per entity per field
 services/review_console/   browser console for the four review queues
 
-tools/ops/                run against a live stack: backup, restore, purge
+tools/ops/                run against a live stack: backup, restore, purge,
+                          project onto the serving database
 tools/fixtures/           generate or cut sample data
 tools/sql/                hand-verification queries
+
+infra/k8s/                the same stack on Kubernetes: every piece a pod, no
+                          cloud-specific resource anywhere in it
+deploy/azure/             the only directory that knows Azure exists -- one
+                          storage class, one registry, one cluster script
 
 data/inbox/watch/         one directory per feed; drop files in, they load
 ```
@@ -139,6 +148,9 @@ Full reasoning: [ADR 0011](docs/decisions/0011-increment-11-review-findings.md),
 | 16 | Kubernetes manifests: same pieces, across a cluster | [0016](docs/decisions/0016-kubernetes-deployment.md) |
 | 17 | AI schema mapping and enrichment, both against a local model, both only ever proposing | [0017](docs/decisions/0017-ai-schema-mapping-and-enrichment.md) |
 | 18 | The broker and the monitoring stack come back — announcements, not values, and a stopped stage becomes a queue | [0018](docs/decisions/0018-restoring-the-broker-and-monitoring.md) |
+| 19 | Intake becomes a queue, one stop clears itself, and the operational state moves onto the dashboard | [0019](docs/decisions/0019-intake-queue-supervisor-and-one-console.md) |
+| 20 | Two databases, and a one-way road between them: the golden record projected onto the app that displays it | [0020](docs/decisions/0020-serving-projection.md) |
+| 21 | The whole stack on a cluster, and no cloud underneath it: every piece a pod, one directory that knows Azure exists | [0021](docs/decisions/0021-the-whole-stack-on-a-cluster.md) |
 
 Every ADR is kept even after the code it describes changes — it's the record
 of *why*, not a promise the description still matches today's code. These

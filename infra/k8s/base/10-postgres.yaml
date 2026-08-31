@@ -37,6 +37,20 @@ spec:
       # Alpine's postgres image chowns its own data directory on first start;
       # this only has to be true from the container's own point of view, so no
       # extra securityContext is needed beyond what the image already does.
+      # No Kubernetes API token in this pod, for two reasons that happen to
+      # point the same way.
+      #
+      # The mechanical one: the secret volume below mounts at /run/secrets, and
+      # /var/run is a symlink to /run on every Linux image here. Kubernetes
+      # mounts its service-account token at
+      # /var/run/secrets/kubernetes.io/serviceaccount, which means creating a
+      # directory inside a read-only secret mount. It cannot, and the container
+      # fails to start with "mkdirat ... read-only file system" -- before any
+      # application code runs, so there is nothing in the logs to explain it.
+      #
+      # The other one: nothing in this pod calls the Kubernetes API. A token it
+      # never uses is a credential sitting in a container for no reason.
+      automountServiceAccountToken: false
       containers:
         - name: postgres
           image: postgres:18.4-alpine

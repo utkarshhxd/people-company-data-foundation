@@ -1,0 +1,84 @@
+# Replaces Azure Files (the `azurefile-csi` StorageClass the AKS-based
+# deployment used) now that the cluster is self-managed k3s rather than AKS
+# -- there is no cloud-managed ReadWriteMany filesystem to point at any
+# more, so the cluster runs its own. See
+# docs/decisions/0023-remove-aks-and-acr-dependency.md.
+#
+# This backs the one volume two pods have to write at once (pcdf-data, see
+# 12-data-pvc.yaml): the watcher sweeps it, the console's upload form writes
+# into it. A single NFS server pod, backed by an ordinary ReadWriteOnce
+# volume on the cluster's default StorageClass, is enough -- it is not
+# meant to be highly available, only shared.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  namespace: pcdf
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+    spec:
+      containers:
+        - name: nfs-server
+          image: itsthenetwork/nfs-server-alpine:12
+          env:
+            - name: SHARED_DIRECTORY
+              value: /exports
+          ports:
+            - containerPort: 2049
+              name: nfs
+            - containerPort: 111
+              name: rpcbind
+            - containerPort: 20048
+              name: mountd
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: exports
+              mountPath: /exports
+      volumes:
+        - name: exports
+          persistentVolumeClaim:
+            claimName: nfs-server-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-server-storage
+  namespace: pcdf
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-server
+  namespace: pcdf
+spec:
+  # Pinned rather than auto-assigned: kubelet mounts NFS PersistentVolumes
+  # from the node's own network namespace, which has no cluster DNS
+  # resolver, so 12-data-pvc.yaml's PersistentVolume references this
+  # Service by IP, not by its nfs-server.pcdf.svc.cluster.local name. A
+  # fixed clusterIP is what makes that reference stable across re-applies
+  # instead of drifting to whatever address gets auto-assigned next.
+  clusterIP: 10.43.187.79
+  selector:
+    app: nfs-server
+  ports:
+    - name: nfs
+      port: 2049
+    - name: rpcbind
+      port: 111
+    - name: mountd
+      port: 20048

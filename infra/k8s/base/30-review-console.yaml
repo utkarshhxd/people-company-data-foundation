@@ -1,25 +1,46 @@
-# The only long-running thing in the record-at-a-time path: runs
-# record_pipeline's `process watch`. Kept at a single replica on purpose: two
-# watchers polling the same feed directory
-# would both see a settled file and could both start loading it. The
-# size/mtime-unchanged check in services/record_pipeline/src/record_pipeline/watch.py
-# guards against a file still being copied, not against two watchers.
+# The only long-running HTTP process in the stack: a browser console for the
+# four review queues, the pipeline dashboard, and the operational controls.
+# Writes nothing of its own -- every decision goes through the same functions
+# the review CLIs call. See docs/guides/review-console.md.
+#
+# Also the stack's Prometheus target: `/metrics` carries the pipeline gauges
+# (review_console/src/review_console/pipeline_metrics.py), which is why
+# 40-prometheus.yaml scrapes this Service and not the consumers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: review-console
+  namespace: pcdf
+  labels:
+    app: review-console
+spec:
+  selector:
+    app: review-console
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: watcher
+  name: review-console
   namespace: pcdf
 spec:
+  # Single replica, for the same reason the data volume is shared rather than
+  # per-pod: the upload form writes files into /data/inbox/uploads for the
+  # watcher to pick up, and a second replica would be a second writer with no
+  # coordination. The console is not the bottleneck in this system.
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: watcher
+      app: review-console
   template:
     metadata:
       labels:
-        app: watcher
+        app: review-console
     spec:
       securityContext:
         # The image runs as the non-root `app` user, uid/gid 10001 (see the
@@ -52,50 +73,49 @@ spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
       containers:
-        - name: watcher
-          image: pcdf-watcher:local
-          command: ["uv", "run", "--frozen", "--no-sync", "process", "watch", "--poll", "10"]
+        - name: review-console
+          image: pcdf-review-console:local
           envFrom:
             - configMapRef:
                 name: pcdf-config
           env:
-            - name: PCDF_HEARTBEAT
-              value: /tmp/pcdf-watcher-heartbeat
-            # Overrides the ConfigMap's consumer value. The watcher's tolerance
-            # is its own setting rather than a multiple of anything: it beats
-            # after each file as well as after each sweep, so the thing being
-            # bounded is how long one file may take. 30 minutes -- longer than
-            # any single file should take, short enough to notice the same day.
-            - name: PCDF_STALE_AFTER
-              value: "1800"
-            # WARNING and above is copied into `service_log` as well as stdout,
-            # so the console's Activity tab can show what this service said
-            # without cluster access to eleven pods' logs. Dropped rather than
-            # blocking if Postgres cannot keep up; see
-            # libs/common/src/common/dblog.py.
             - name: LOG_TO_DATABASE
               value: "true"
-          # The watcher has no port to probe, and a process that is running is
-          # not the same as a process that is sweeping: one wedged mid-file
-          # keeps the pod Running while no file has been loaded in hours. The
-          # heartbeat is what makes staleness visible -- same check the Compose
-          # healthcheck makes, as a liveness probe so Kubernetes restarts it.
-          livenessProbe:
-            exec:
-              command:
-                - python3
-                - -c
-                - "import os,sys,time; p=os.environ['PCDF_HEARTBEAT']; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < float(os.environ['PCDF_STALE_AFTER']) else 1)"
-            initialDelaySeconds: 40
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 3
+            - name: ALERTMANAGER_URL
+              value: http://alertmanager:9093
+            # Not set as a value: the keys arrive as a mounted file at
+            # /run/secrets/pcdf_api_keys, which common.config.resolve() finds
+            # without being told to. Unset and unmounted means the console
+            # serves only to loopback -- see the Ingress in the next file.
+          ports:
+            - containerPort: 8000
+              name: http
           volumeMounts:
             - name: secrets
               mountPath: /run/secrets
               readOnly: true
             - name: data
               mountPath: /data
+          # `restart: unless-stopped` in Compose only restarts a container that
+          # exited; a process still running but unable to reach Postgres stays
+          # up forever serving 503s. /health/ready already answers the
+          # question -- this is what makes the answer count for something.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
       volumes:
         - name: secrets
           secret:
@@ -103,6 +123,8 @@ spec:
             items:
               - key: postgres_password
                 path: postgres_password
+              - key: pcdf_api_keys
+                path: pcdf_api_keys
         - name: data
           persistentVolumeClaim:
             claimName: pcdf-data

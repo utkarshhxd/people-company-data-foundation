@@ -1,0 +1,58 @@
+# Reaching the console from outside the cluster.
+#
+# READ THIS BEFORE APPLYING IT. The console shows personal data with full
+# provenance -- names, emails, phone numbers, raw quarantined rows, which
+# vendor sold them. Applying this file puts that on a public IP. What stands
+# between the two is the `pcdf_api_keys` value in the Secret: with no keys
+# configured the console answers only loopback, and through an Ingress every
+# request arrives from somewhere else, so every request is refused with 503.
+# That failure mode is the safe one -- it fails closed, not open -- but a
+# refused console is not a deployed console, so set real keys.
+#
+# Do not set PCDF_ALLOW_UNAUTHENTICATED here. It exists for a console on a
+# trusted network; on an Ingress it means no keys are checked at all.
+#
+# Skip this file entirely and reach the console without exposing anything:
+#   kubectl port-forward -n pcdf svc/review-console 8000:8000
+#   open http://localhost:8000/admin/page
+#
+# Two things this assumes, neither of which is installed by applying it:
+#   * an ingress controller in the cluster (ingress-nginx is the portable
+#     choice -- it runs the same on any cluster, which the cloud-specific
+#     alternatives do not);
+#   * cert-manager with a ClusterIssuer named `letsencrypt`, for the TLS
+#     block below. Remove the annotation and the `tls:` section if you are
+#     terminating TLS somewhere else -- but do not remove them and serve the
+#     console over plain HTTP, because the API key travels in a header.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: review-console
+  namespace: pcdf
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    # Uploaded vendor exports go through here. The default body limit is 1MB,
+    # which is smaller than most real files.
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    # A large upload's request should not be cut off mid-file.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pcdf.example.com
+      secretName: review-console-tls
+  rules:
+    # Replace with a hostname whose DNS points at the ingress controller's
+    # external IP. Left as example.com on purpose: a real hostname committed
+    # here is a real hostname somebody deploys by accident.
+    - host: pcdf.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: review-console
+                port:
+                  number: 8000

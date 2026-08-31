@@ -1,0 +1,148 @@
+# The broker, as it runs in Compose: one KRaft node, no ZooKeeper, replication
+# factor 1. Records do not move between stages on it -- a record's whole turn
+# through the pipeline is one function call in one transaction (ADR 0012) --
+# but a batch is announced on it, and that announcement is what drives the five
+# stage consumers. Postgres stays the source of truth.
+#
+# One broker rather than three, deliberately -- the same shape Compose runs,
+# and the shape `TOPIC_REPLICATION_FACTOR` in
+# libs/common/src/common/kafka.py already assumes. A three-broker cluster buys
+# durability for events that are announcements about rows already committed
+# elsewhere: losing one costs a re-announcement, not the data it referred to.
+# If that stops being true, three things move together and none of them works
+# alone: `replicas` here, the two replication-factor environment variables
+# below, and that constant. See ADR 0021.
+#
+# Unlike Compose, there is no PLAINTEXT_HOST listener: nothing outside the
+# cluster connects to this broker. Reach it for debugging with
+#   kubectl port-forward -n pcdf svc/kafka 9092:9092
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: pcdf
+spec:
+  # Headless, like the Postgres Service in 10-postgres.yaml, and for a reason
+  # beyond symmetry: a StatefulSet's per-pod DNS name (kafka-0.kafka) only
+  # exists if its governing Service is headless. KAFKA_CONTROLLER_QUORUM_VOTERS
+  # below names the broker by exactly that address, so with a ClusterIP Service
+  # the broker cannot resolve its own controller and dies in
+  # NodeToControllerRequestThread with an UnknownHostException.
+  #
+  # Clients are unaffected: with one pod behind it, `kafka` resolves to that
+  # pod's address either way.
+  clusterIP: None
+  # Without this, a headless Service publishes DNS records only for pods that
+  # are already Ready -- and this broker cannot become Ready until it resolves
+  # kafka-0.kafka to reach its own controller. That is a deadlock the pod never
+  # escapes: UnknownHostException on every attempt, restart, repeat.
+  #
+  # Safe here for the same reason it is usually risky: there is one broker, so
+  # "an address that may not be ready yet" is the only address there is, and
+  # clients already retry a broker that is not accepting connections.
+  publishNotReadyAddresses: true
+  selector:
+    app: kafka
+  ports:
+    - name: plaintext
+      port: 9092
+      targetPort: 9092
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: pcdf
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      # Compose ran a busybox `chown -R 1000:1000` sidecar before the broker
+      # because a bind-mounted host directory arrives owned by root. A
+      # PersistentVolume does not need that: fsGroup makes the kubelet hand the
+      # volume over already owned by the group the image's user belongs to.
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: kafka
+          image: apache/kafka:4.3.1
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_LISTENERS
+              value: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+            # What clients are told to connect to. The Service name above,
+            # resolved by cluster DNS -- correct for a single broker; a
+            # multi-broker cluster would have to advertise each pod's own
+            # headless-Service address instead.
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: PLAINTEXT://kafka:9092
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: PLAINTEXT
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@kafka-0.kafka:9093
+            # A subdirectory of the mount, not the mount itself. A
+            # PersistentVolume arrives as a freshly formatted ext4 filesystem,
+            # and every ext4 filesystem has a lost+found directory at its root.
+            # Kafka refuses to start if its log directory contains anything
+            # that is not a topic partition -- "Found directory
+            # /var/lib/kafka/data/lost+found ... should only contain Kafka
+            # topic data" -- and creates this subdirectory itself. Compose
+            # never hits this because a Docker volume is a directory on an
+            # existing filesystem rather than a filesystem of its own.
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data/logs
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+          ports:
+            - containerPort: 9092
+              name: plaintext
+            - containerPort: 9093
+              name: controller
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            # Topics here carry references to committed rows, never values, so
+            # they stay small -- this is headroom for a backlog that nobody
+            # drained, not for the data itself.
+            storage: 10Gi

@@ -2,6 +2,15 @@
 
 ## Status
 
+Partially superseded by [ADR 0021](0021-the-whole-stack-on-a-cluster.md).
+Two parts of this ADR no longer describe the repository: the three-broker Kafka
+cluster (and the `kafka_topic_replication_factor` setting it required, which is
+still the constant `TOPIC_REPLICATION_FACTOR = 1` in
+`libs/common/src/common/kafka.py`), and the inventory of what the manifests
+deploy. The secrets seam, the "no Helm" reasoning, the baked-in `tools/`, and
+the account of what Compose's single-host assumption was load-bearing for all
+stand.
+
 Accepted, partially verified. See the "Verification" section below before
 treating this as equivalent in confidence to ADRs 0001-0015 — every one of
 those was proven against a live stack; this one was proven against

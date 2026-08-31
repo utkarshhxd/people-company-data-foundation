@@ -1,0 +1,113 @@
+# Nightly backup, verified.
+#
+# The Compose equivalent is `tools/ops/backup.sh`, run by hand with
+# `docker compose exec -T postgres sh /tools/ops/backup.sh`. That script cannot
+# be reused verbatim here: it lives in tools/, kustomize refuses to read files
+# outside the directory holding kustomization.yaml (LoadRestrictionsRootOnly --
+# see infra/kustomization.yaml's header), and the postgres image has no copy of
+# this repository to read it from. So the same two steps are inlined below. If
+# the script changes, change this too -- they are two statements of one policy.
+#
+# The policy, unchanged from the script: dump in custom format (-Fc, so it
+# compresses and pg_restore can read its table of contents), then read the
+# archive back before reporting success. A backup nobody has read back is not a
+# backup, and the failure that matters is not "the backup did not run", which
+# is noisy, but "the backup ran and produced something unrestorable", which is
+# silent until the day it is needed.
+#
+# What this is not: off-site. The dumps land on a volume in the same cluster as
+# the database they came from. Copy them somewhere else -- object storage, another
+# cluster -- before calling this disaster recovery. Retrieve one with:
+#   kubectl cp -n pcdf <backup-pod>:/backups/pcdf-<stamp>.dump ./restore-me.dump
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pcdf-backups
+  namespace: pcdf
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: pcdf
+spec:
+  # 02:00 UTC. Nothing in this pipeline is time-of-day sensitive; the point is
+  # only that it not overlap a working day's review traffic.
+  schedule: "0 2 * * *"
+  # A backup that starts before the last one finished would contend for the
+  # same volume and the same database. Skip it instead; the next night's run
+  # covers the same ground.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 7
+  # A missed window (cluster down, node drained) should not fire a burst of
+  # catch-up runs when it comes back.
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 70
+          containers:
+            - name: backup
+              # The same image the database runs, so pg_dump's version can
+              # never be older than the server it is dumping.
+              image: postgres:18.4-alpine
+              envFrom:
+                - configMapRef:
+                    name: pcdf-config
+              env:
+                # libpq's own convention. This is a client, not the server, so
+                # POSTGRES_PASSWORD_FILE (which only the official image's
+                # entrypoint understands) would do nothing here.
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: pcdf-secrets
+                      key: postgres_password
+                # How many dumps to keep on the volume. Two weeks: long enough
+                # that a corruption noticed on a Monday still has a clean
+                # ancestor, short enough to size the volume for.
+                - name: KEEP
+                  value: "14"
+              command:
+                - sh
+                - -eu
+                - -c
+                - |
+                  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  FILE="/backups/pcdf-$STAMP.dump"
+                  echo "dumping $POSTGRES_DB -> $FILE"
+                  pg_dump --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" \
+                          --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+                          --format=custom --compress=6 --file "$FILE"
+
+                  echo "verifying archive is readable"
+                  TABLES=$(pg_restore --list "$FILE" | grep -c 'TABLE DATA' || true)
+                  if [ "$TABLES" -lt 1 ]; then
+                      echo "FAILED: archive contains no table data" >&2
+                      exit 1
+                  fi
+                  echo "ok: $FILE ($(du -h "$FILE" | cut -f1), $TABLES tables with data)"
+
+                  # Prune only after the new dump has been verified, so a run
+                  # that fails never takes the last good backup with it.
+                  ls -1t /backups/pcdf-*.dump | tail -n +$((KEEP + 1)) | while read -r old; do
+                      echo "pruning $old"
+                      rm -f "$old"
+                  done
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: pcdf-backups

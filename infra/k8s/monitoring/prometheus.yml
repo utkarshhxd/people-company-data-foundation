@@ -1,0 +1,41 @@
+# The cluster's copy of infra/prometheus/prometheus.yml.
+#
+# One difference, and it is the reason this is a second file rather than the
+# same one: Compose reaches the console at `review_console:8000`, its service
+# name there, and a Kubernetes Service name cannot contain an underscore
+# (RFC 1123). The target below is the Service in
+# infra/k8s/base/30-review-console.yaml. Everything else -- intervals, rule
+# path, Alertmanager address -- is identical, and infra/prometheus/rules/ is
+# shared between both, so an alert rule is written once.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # The console replaced services/api and carries the pipeline gauges now. The
+  # consumers are not scraped: they expose no metrics of their own, and what
+  # anyone wants to know about them -- consumer lag, batch progress -- the
+  # console reads from Postgres and Kafka on scrape.
+  - job_name: "review-console"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["review-console:8000"]
+        labels:
+          service: "review-console"
+          environment: "cluster"
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "alertmanager"
+    static_configs:
+      - targets: ["alertmanager:9093"]

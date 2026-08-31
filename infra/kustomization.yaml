@@ -5,13 +5,17 @@
 # This file has to live here rather than under k8s/base/: kustomize refuses to
 # read a file that is not in or below the directory holding kustomization.yaml
 # (LoadRestrictionsRootOnly, the default -- see `kubectl kustomize --help`),
-# and infra/ is the closest directory that is an ancestor of k8s/base/.
+# and the Prometheus rules, Grafana dashboards and Alertmanager template that
+# become ConfigMaps below all live under infra/.
+#
+# Nothing here names a cloud. The one genuinely provider-specific thing is
+# which StorageClass backs each volume, and that lives in an overlay --
+# deploy/azure/ is one, and is the only directory in this repository
+# that knows Azure exists. Deploying somewhere else means writing a sibling to
+# it, not editing anything below.
 #
 # Render locally (no cluster needed):    kubectl kustomize infra
-# Apply, once images exist in a registry the cluster can pull from and a real
-# Secret has replaced k8s/base/02-secret.example.yaml -- see
-# infra/k8s/README.md for the full sequence and what has and has not been run
-# against a live cluster.
+# Apply:                                 see infra/k8s/README.md
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -23,17 +27,84 @@ resources:
   # k8s/base/02-secret.example.yaml is deliberately not listed: it is a
   # template to copy out and fill in, not something to apply as-is. See its
   # own header.
+  # k8s/base/04-registry-secret.example.yaml is the same kind of template,
+  # for ghcr.io pull credentials -- also not listed here.
+  - k8s/base/09-nfs-server.yaml
   - k8s/base/10-postgres.yaml
+  - k8s/base/11-kafka.yaml
   - k8s/base/12-data-pvc.yaml
   - k8s/base/13-migrate-job.yaml
+  - k8s/base/14-postgres-backup.yaml
   - k8s/base/20-watcher.yaml
+  - k8s/base/21-mapping.yaml
+  - k8s/base/22-normalization.yaml
+  - k8s/base/23-validation.yaml
+  - k8s/base/24-resolution.yaml
+  - k8s/base/25-golden.yaml
+  - k8s/base/30-review-console.yaml
+  # k8s/base/31-review-console-ingress.yaml is deliberately not listed: it puts
+  # personal data on a public IP and needs a hostname, a certificate issuer and
+  # real API keys first. Read its header, then apply it by hand.
+  - k8s/base/40-prometheus.yaml
+  - k8s/base/41-alertmanager.yaml
+  - k8s/base/42-grafana.yaml
+
+# The monitoring config, from the same files Compose mounts -- so an alert rule
+# or a dashboard panel is written once and runs in both places. Generated
+# rather than committed as ConfigMap YAML because kustomize appends a content
+# hash to each name and rewrites the references: editing a rule rolls the pod
+# that reads it, instead of leaving it serving the old copy until someone
+# remembers to restart it.
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      # k8s/monitoring/, not prometheus/: the console's Service name differs
+      # between Compose and Kubernetes. See that file's header.
+      - prometheus.yml=k8s/monitoring/prometheus.yml
+  - name: prometheus-rules
+    files:
+      - alerts.yml=prometheus/rules/alerts.yml
+  - name: alertmanager-config
+    files:
+      - alertmanager.yml.tmpl=alertmanager/alertmanager.yml.tmpl
+      - entrypoint.sh=alertmanager/entrypoint.sh
+  - name: grafana-datasources
+    files:
+      - datasource.yml=grafana/provisioning/datasources/datasource.yml
+  - name: grafana-dashboard-provider
+    files:
+      - dashboards.yml=grafana/provisioning/dashboards/dashboards.yml
+  - name: grafana-dashboards
+    files:
+      - data-foundation.json=grafana/provisioning/dashboards/json/data-foundation.json
+      - service-health.json=grafana/provisioning/dashboards/json/service-health.json
 
 # Placeholders. Point these at wherever your cluster actually pulls from --
-# see infra/k8s/README.md for the build-and-push step each one assumes.
+# infra/scripts/build-and-push.sh builds and pushes exactly this list, and an
+# overlay (deploy/azure) sets newName for a specific registry without
+# editing this file.
 images:
   - name: pcdf-ingestion:local
     newName: REGISTRY/pcdf-ingestion
     newTag: latest
   - name: pcdf-watcher:local
     newName: REGISTRY/pcdf-watcher
+    newTag: latest
+  - name: pcdf-mapping:local
+    newName: REGISTRY/pcdf-mapping
+    newTag: latest
+  - name: pcdf-normalization:local
+    newName: REGISTRY/pcdf-normalization
+    newTag: latest
+  - name: pcdf-validation:local
+    newName: REGISTRY/pcdf-validation
+    newTag: latest
+  - name: pcdf-resolution:local
+    newName: REGISTRY/pcdf-resolution
+    newTag: latest
+  - name: pcdf-golden:local
+    newName: REGISTRY/pcdf-golden
+    newTag: latest
+  - name: pcdf-review-console:local
+    newName: REGISTRY/pcdf-review-console
     newTag: latest

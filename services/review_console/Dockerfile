@@ -36,6 +36,15 @@ COPY services/review_console/tests services/review_console/tests
 RUN uv sync --frozen --package review-console-service
 
 ENV PYTHONPATH=/app/services/review_console/src
+
+# The Operations tab runs the reconciliation checks in tools/sql/verify.sql,
+# and reads them from an absolute /tools/sql/verify.sql
+# (review_console/src/review_console/operations.py). Compose supplies that as a
+# read-only bind mount of ./tools, which assumes the container is scheduled on
+# a host with this repository checked out -- not true once a pod can land on
+# any node. Baked in at the same path, so the bind mount still overlays
+# identical content and nothing about the Compose path changes.
+COPY tools/ /tools
 WORKDIR /app/services/review_console
 
 # Drop root. Nothing here needs it: the venv and the app are baked in at build

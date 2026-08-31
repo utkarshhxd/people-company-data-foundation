@@ -1,13 +1,17 @@
-# The only long-running thing in the record-at-a-time path: runs
-# record_pipeline's `process watch`. Kept at a single replica on purpose: two
-# watchers polling the same feed directory
-# would both see a settled file and could both start loading it. The
-# size/mtime-unchanged check in services/record_pipeline/src/record_pipeline/watch.py
-# guards against a file still being copied, not against two watchers.
+# Consumes records.normalized, judges every value and routes what cannot be
+# used into quarantine, publishes records.validated. Its circuit breaker is
+# resumed the same way Compose resumes it:
+#   kubectl exec -n pcdf deploy/validation -- uv run --frozen --no-sync \n#     validation-control resume --reviewed-by you
+#
+# One replica. Each consumer is a single member of its own consumer group, and
+# the work it does is transactional against Postgres rather than partitioned
+# across pods -- a second replica would contend for the same batches rather
+# than halve the time they take. Scaling out is a partitioning change in the
+# topics first, not a `replicas: 2` here.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: watcher
+  name: validation
   namespace: pcdf
 spec:
   replicas: 1
@@ -15,23 +19,12 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: watcher
+      app: validation
   template:
     metadata:
       labels:
-        app: watcher
+        app: validation
     spec:
-      securityContext:
-        # The image runs as the non-root `app` user, uid/gid 10001 (see the
-        # Dockerfile), and a PersistentVolume arrives owned by root -- so
-        # without this the one directory this pod exists to write is one it
-        # cannot write, and the failure is a bare "Permission denied" with no
-        # hint as to why. fsGroup makes the kubelet hand the volume over
-        # group-owned by 10001 and group-writable.
-        #
-        # Compose never needed it: a bind mount of ./data inherits the
-        # ownership of a directory the host user already owns.
-        fsGroup: 10001
       # No Kubernetes API token in this pod, for two reasons that happen to
       # point the same way.
       #
@@ -52,34 +45,37 @@ spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
       containers:
-        - name: watcher
-          image: pcdf-watcher:local
-          command: ["uv", "run", "--frozen", "--no-sync", "process", "watch", "--poll", "10"]
+        - name: validation
+          image: pcdf-validation:local
+          command: ["uv", "run", "--frozen", "--no-sync", "validation-consumer"]
           envFrom:
             - configMapRef:
                 name: pcdf-config
           env:
+            # Per-service, so one consumer's stalled heartbeat cannot be
+            # mistaken for another's.
             - name: PCDF_HEARTBEAT
-              value: /tmp/pcdf-watcher-heartbeat
-            # Overrides the ConfigMap's consumer value. The watcher's tolerance
-            # is its own setting rather than a multiple of anything: it beats
-            # after each file as well as after each sweep, so the thing being
-            # bounded is how long one file may take. 30 minutes -- longer than
-            # any single file should take, short enough to notice the same day.
-            - name: PCDF_STALE_AFTER
-              value: "1800"
+              value: /tmp/pcdf-validation-consumer-heartbeat
             # WARNING and above is copied into `service_log` as well as stdout,
             # so the console's Activity tab can show what this service said
             # without cluster access to eleven pods' logs. Dropped rather than
             # blocking if Postgres cannot keep up; see
-            # libs/common/src/common/dblog.py.
+            # libs/common/src/common/dblog.py. Set here rather than in the
+            # ConfigMap because the migrate Job shares that ConfigMap and has
+            # no console watching it.
             - name: LOG_TO_DATABASE
               value: "true"
-          # The watcher has no port to probe, and a process that is running is
-          # not the same as a process that is sweeping: one wedged mid-file
-          # keeps the pod Running while no file has been loaded in hours. The
-          # heartbeat is what makes staleness visible -- same check the Compose
-          # healthcheck makes, as a liveness probe so Kubernetes restarts it.
+          # No POSTGRES_PASSWORD env var here: common.config.resolve() finds
+          # the mounted secret at /run/secrets/postgres_password on its own.
+          volumeMounts:
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+          # A process that is running is not the same as a process that is
+          # consuming: one wedged mid-batch keeps the pod Running while its
+          # topic backs up. It touches the heartbeat after every completed
+          # batch, so staleness is the signal -- the same check the Compose
+          # healthcheck makes.
           livenessProbe:
             exec:
               command:
@@ -90,12 +86,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
-          volumeMounts:
-            - name: secrets
-              mountPath: /run/secrets
-              readOnly: true
-            - name: data
-              mountPath: /data
       volumes:
         - name: secrets
           secret:
@@ -103,6 +93,3 @@ spec:
             items:
               - key: postgres_password
                 path: postgres_password
-        - name: data
-          persistentVolumeClaim:
-            claimName: pcdf-data

@@ -13,5 +13,12 @@ data:
   # username (if you switch off the default) together, same as Compose.
   POSTGRES_USER: pcdf_dev
   POSTGRES_DB: pcdf
+  # The Service in 11-kafka.yaml, resolved by cluster DNS. Compose reaches the
+  # broker at the same host:port through its bridge network.
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   LOG_LEVEL: info
   PCDF_WATCH_DIR: /data/inbox/watch
+  # How stale a consumer's heartbeat may get before its liveness probe calls it
+  # stuck. .env.example's PCDF_CONSUMER_STALE_AFTER, under the name the probe
+  # itself reads.
+  PCDF_STALE_AFTER: "900"

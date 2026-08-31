@@ -1,16 +1,67 @@
-# Compose bind-mounts ./data from the host, which every service can do
-# because every service runs on the one host. Once pods can be scheduled onto
-# any node, that stops being true, so this becomes a real volume. ReadWriteOnce
-# is enough: only the watcher writes, and it runs as a single replica by
-# design (see 20-watcher.yaml) precisely so two pods never race to claim the
-# same dropped file.
+# Compose bind-mounts ./data from the host, which every service can do because
+# every service runs on the one host. Once pods can be scheduled onto any node,
+# that stops being true, so this becomes a real volume.
+#
+# ReadWriteMany, not ReadWriteOnce: two pods mount it. The watcher sweeps
+# /data/inbox/watch, and the review console's upload form writes into
+# /data/inbox/uploads (review_console/src/review_console/uploads.py) so a file
+# dropped through the browser lands in the same tree as a file dropped on disk.
+# Block storage cannot do that across nodes -- this needs a filesystem-backed
+# class (Azure Files, EFS, NFS, CephFS).
+#
+# Backed by the cluster's own NFS server (09-nfs-server.yaml) rather than a
+# cloud-managed filesystem -- see
+# docs/decisions/0023-remove-aks-and-acr-dependency.md. That is a deliberate
+# swap away from "the one genuinely cloud-specific thing about this claim"
+# (this file's own words, before that ADR): there is no longer a
+# StorageClass name for an overlay to set, because there is no longer a
+# cloud-managed filesystem to name. A PersistentVolume of type NFS, bound
+# statically to the PVC below by name, replaces it -- portable to any
+# cluster that can reach the nfs-server Service, cloud or not.
+#
+# Only one pod ever *claims* a dropped file: the watcher runs at a single
+# replica by design (see 20-watcher.yaml), so nothing races over the same file.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pcdf-data-nfs
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes: [ReadWriteMany]
+  # Empty, not omitted: an empty string tells Kubernetes not to run dynamic
+  # provisioning for this claim, which is required for a PV meant to be
+  # bound by name rather than allocated on demand.
+  storageClassName: ""
+  nfs:
+    # By IP, not by nfs-server.pcdf.svc.cluster.local: kubelet mounts NFS
+    # volumes from the node's own network namespace, which has no cluster
+    # DNS resolver -- a DNS name here mounts fine inside a pod but hangs
+    # forever ("ContainerCreating") when kubelet tries it directly on the
+    # host. 10.43.187.79 is 09-nfs-server.yaml's Service pinned to this
+    # exact address for that reason; if that pin ever changes, this has to
+    # change with it.
+    server: 10.43.187.79
+    # "/", not "/exports": 09-nfs-server.yaml's export is written with
+    # fsid=0 (itsthenetwork/nfs-server-alpine's default), which makes
+    # /exports the NFSv4 pseudo-filesystem root rather than a path under
+    # it. A client asking for /exports against an fsid=0 export gets
+    # ENOENT ("No such file or directory") -- the export is only reachable
+    # at the root.
+    path: /
+  claimRef:
+    namespace: pcdf
+    name: pcdf-data
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: pcdf-data
   namespace: pcdf
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: pcdf-data-nfs
   resources:
     requests:
       storage: 10Gi

@@ -45,15 +45,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--read-ahead", type=int, default=DEFAULT_BATCH_SIZE, metavar="N",
         help=(
             f"rows pulled off disk per read (default {DEFAULT_BATCH_SIZE}). This is "
-            "buffering only — records are still processed and committed one at a time."
+            f"buffering only — records are still resolved one at a time, in file "
+            f"order, and committed in batches of {runner.COMMIT_BATCH_SIZE}."
         ),
     )
     run.add_argument(
         "--no-golden", action="store_true",
         help=(
-            "skip rebuilding each record's entity as it lands. Faster, but a "
-            "record is not fully current when it finishes, so downstream must "
-            "wait for a separate golden build."
+            "skip rebuilding golden for the entities each batch of records "
+            "touches. Faster, but a record is not fully current when its batch "
+            "commits, so downstream must wait for a separate golden build."
         ),
     )
     run.add_argument(
@@ -69,12 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument(
-        "--async-commit", action="store_true",
+        "--sync-commit", action="store_true",
         help=(
-            "defer the commit fsync for this run (synchronous_commit=off). Roughly "
-            "1.7x faster. A crash can lose recently committed records, which leaves "
-            "the batch un-completed and therefore ignored downstream; recovery is "
-            "re-running the file."
+            "keep synchronous_commit on for this run, fsyncing every batch of "
+            f"{runner.COMMIT_BATCH_SIZE} records instead of deferring it. Slower; "
+            "the default (off) can lose an in-flight batch of recently committed "
+            "records on a crash, which leaves the batch un-completed and "
+            "therefore ignored downstream — recovery is re-running the file."
         ),
     )
     run.add_argument(
@@ -156,7 +158,7 @@ def _run(args) -> int:
             build_golden=not args.no_golden,
             publish=not args.no_publish,
             fail_fast=args.fail_fast,
-            async_commit=args.async_commit,
+            async_commit=not args.sync_commit,
             describes=args.describes,
         )
     except control.StagePaused as exc:
@@ -188,6 +190,7 @@ def _run(args) -> int:
         f"  linked     {result.linked}\n"
         f"  new        {result.new_entities}\n"
         f"  review     {result.review}\n"
+        f"  golden     {result.golden_written} value(s) written/refreshed\n"
         f"  mapping    {'reused' if result.mapping_reused else 'derived'}"
     )
     # A run with failed records succeeded at its job — it processed what it

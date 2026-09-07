@@ -4,21 +4,24 @@ The shape of a record's turn through here is deliberate:
 
   1. compute      — normalize and validate entirely in memory, no database
   2. one read     — which entities do this record's identity keys already reach?
-  3. one write    — everything the record produces, including the entity's
-                    rebuilt golden values, in one transaction and one commit
+  3. one write    — everything the record produces, in one round-tripped batch
 
 Steps 1 and 2 are what make step 3 a single flush. Nothing in the write depends
 on a value that has to come back from the server first, because the ids are
 chosen here rather than by the column defaults. That is the whole trick: the
 record stays the unit of meaning *and* the unit of I/O.
 
-Because golden is inside that same transaction, a record and everything derived
-from it become visible together. When process() returns, there is nothing left
-outstanding about that record — which is what makes it safe to hand straight to
-another system.
+process() does not commit and does not touch golden. Both are the caller's job:
+the caller decides how many records share a transaction, and rebuilds golden
+for every entity in outcome.pending_golden before committing that transaction —
+which is what keeps "a record and everything derived from it become visible
+together" true, at the transaction's grain rather than the record's. Building
+golden here, once per record, would recompute a popular entity's whole history
+once per record that touches it; the caller instead dedupes by entity across
+whatever it batches together.
 
 Every decision below is made by the module that owns it. This file chooses the
-order and the transaction boundary, and nothing else.
+order, and nothing else — not the transaction boundary, not golden's timing.
 """
 
 import logging
@@ -26,7 +29,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from common.ids import uuid7
-from golden.pipeline import build_entity
 from ingestion import repository as ingest_repo
 from normalization import repository as norm_repo
 from normalization.pipeline import observations_for_record
@@ -63,7 +65,7 @@ class RecordOutcome:
     entity_id: str | None = None
     match_decision: str | None = None
     failed_rules: list[str] = field(default_factory=list)
-    golden_written: int = 0
+    pending_golden: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -136,7 +138,12 @@ def process(
     ctx, conn, source_record_id: str, row_number: int,
     payload: dict[str, str | None], *, build_golden: bool = True,
 ) -> RecordOutcome:
-    """Run one record the whole way through. Commits it, or raises."""
+    """Run one record the whole way through the write, or raise.
+
+    Does not commit. The caller owns the transaction boundary and, when
+    build_golden is set, must rebuild golden for outcome.pending_golden before
+    committing — see the module docstring for why.
+    """
     record_id = uuid7()
     observed_at = datetime.now(UTC)
 
@@ -176,9 +183,11 @@ def process(
         entity_id = str(uuid7())
 
     # ---- 3. one write ----------------------------------------------------
-    # Pipeline mode sends these without waiting for each result, and the commit
-    # syncs. The record is still exactly one transaction: it lands whole or not
-    # at all.
+    # Pipeline mode sends these without waiting for each result, syncing once
+    # at the end of the block instead of once per statement. The record's
+    # writes still land whole or not at all; whether that "not at all" is
+    # scoped to this record alone or to a wider batch is the caller's call,
+    # made with a savepoint around this function.
     with conn.pipeline():
         ingest_repo.insert_raw_record(
             conn, record_id, ctx.batch_id, ctx.source_id, ctx.entity_type,
@@ -224,35 +233,21 @@ def process(
                         new_entity_id=str(uuid7()),
                     )
 
-        # ---- 4. golden, in the same transaction --------------------------
-        # Inside the record's own transaction, not after it. Two reasons, and
-        # the second is why this is not merely an optimization:
-        #
-        #   * one commit per record instead of two. Profiling a 20,000-record
-        #     run showed the pipeline was fsync-bound, so halving the commits
-        #     halves the dominant cost.
-        #   * there is no longer a window in which the record exists but the
-        #     entity's golden values have not caught up with it. A record and
-        #     its consequences land together or not at all.
-        #
-        # build_entity reads the observations this transaction just wrote, which
-        # works because a transaction always sees its own uncommitted writes.
-        golden_written = 0
-        if resolvable and build_golden and entity_id:
-            written, refreshed, _unchanged, _retired = build_entity(
-                conn, str(entity_id), ctx.entity_type
-            )
-            golden_written = written + refreshed
-            # The employer is an entity with trusted values of its own, and it
-            # gains them from the same record in the same transaction. Skipping
-            # it would leave a company that exists but says nothing.
-            if employer_entity_id:
-                written, refreshed, _unchanged, _retired = build_entity(
-                    conn, employer_entity_id, "company"
-                )
-                golden_written += written + refreshed
-
-        conn.commit()
+    # ---- 4. golden, named but not built ----------------------------------
+    # Not built here. build_entity reads the observations the write above just
+    # made, which works whenever it runs because a transaction always sees its
+    # own uncommitted writes — including if the caller runs it later, right
+    # before its own commit, on this connection. Naming the entities now and
+    # leaving the read for later is what lets a caller batching several
+    # records dedupe a repeat entity down to one rebuild.
+    pending_golden: list[tuple[str, str]] = []
+    if resolvable and build_golden and entity_id:
+        pending_golden.append((str(entity_id), ctx.entity_type))
+        # The employer is an entity with trusted values of its own, gained
+        # from the same record. Skipping it would leave a company that exists
+        # but says nothing.
+        if employer_entity_id:
+            pending_golden.append((employer_entity_id, "company"))
 
     outcome = RecordOutcome(
         record_id=str(record_id),
@@ -265,7 +260,7 @@ def process(
         entity_id=str(entity_id) if entity_id else None,
         match_decision=_decision_name(decision) if resolvable else None,
         failed_rules=verdict.error_rules,
-        golden_written=golden_written,
+        pending_golden=pending_golden,
     )
     return outcome
 

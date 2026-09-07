@@ -3,10 +3,23 @@
 The runner owns three things the unit does not: which records exist, what
 happens when one of them fails, and who gets told when one is done.
 
-Failure handling is the reason this loop looks the way it does. A record that
-throws is rolled back, written to record_error with its payload, and the run
-continues with the next one. That is the property record-at-a-time buys and
-batching cannot: one unprocessable row costs one row.
+Failure handling is the reason the per-record loop below looks the way it
+does. Each record's write runs under its own SAVEPOINT: a record that throws
+is rolled back to that savepoint (undoing only its own partial writes),
+written to record_error with its payload, and the run continues with the
+next one. That is the property that used to require record-at-a-time commits
+and now does not -- one unprocessable row still costs one row, whether or not
+its neighbours share its transaction.
+
+Commits themselves are batched, COMMIT_BATCH_SIZE records at a time, because
+committing is what was slow: profiling a 20,000-record run showed the
+pipeline was fsync-bound. Golden is batched the same way and for a related
+reason -- see record_pipeline.unit's module docstring -- rebuilt once per
+distinct entity touched in the batch, immediately before that batch commits,
+so a record and its consequences still land together, just at the batch's
+grain rather than the record's. A crash between two commits can lose the
+open batch's records, same as async_commit's fsync deferral already can; a
+record raising mid-batch cannot lose anyone else's.
 """
 
 import logging
@@ -19,6 +32,7 @@ from common import control, events
 from common.canonical import CANONICAL_SCHEMA_VERSION, column_fingerprint
 from common.db import connect
 from common.kafka import EventProducer, ensure_topics
+from golden.pipeline import build_entity
 from ingestion import repository as ingest_repo
 from ingestion.pipeline import ReingestBlocked, file_hash
 from ingestion.readers import DEFAULT_BATCH_SIZE, iter_rows
@@ -38,6 +52,13 @@ PROGRESS_EVERY = 1000
 # fast. This is the resolution at which a run stops -- at 20,000
 # records/minute, within a second or two of the trip.
 BREAKER_CHECK_EVERY = 200
+
+# Records per commit. Bigger means fewer fsyncs and less golden rebuilt
+# redundantly per popular entity; it also means a crash loses up to this many
+# records instead of one, and each transaction holds its row locks a little
+# longer. 500 was chosen as the balance for bulk loads -- see the module
+# docstring for why a crash's blast radius growing here is acceptable.
+COMMIT_BATCH_SIZE = 500
 
 
 class EmptySource(Exception):
@@ -66,6 +87,7 @@ class RunResult:
     new_entities: int = 0
     review: int = 0
     invalid: int = 0
+    golden_written: int = 0
     mapping_reused: bool = False
     events_published: bool = False
     counts: dict[str, int] = field(default_factory=dict)
@@ -107,7 +129,7 @@ def run_file(
     build_golden: bool = True,
     publish: bool = True,
     fail_fast: bool = False,
-    async_commit: bool = False,
+    async_commit: bool = True,
     describes: str | None = None,
 ) -> RunResult:
     digest = file_hash(path)
@@ -162,16 +184,18 @@ def run_file(
         logger.info("batch %s started for %s", batch_id, path.name)
 
         if async_commit:
-            # Atomicity and isolation are untouched; only the fsync at commit is
-            # deferred. Postgres' WAL is one ordered stream, so a crash can only
-            # lose a suffix of committed records — and the batch is not marked
-            # 'completed' until after every record, which means a lost suffix
-            # always leaves the batch un-completed and therefore inert
-            # downstream. Recovery is re-running the file.
+            # The default for bulk loads. Atomicity and isolation are
+            # untouched; only the fsync at commit is deferred. Postgres' WAL is
+            # one ordered stream, so a crash can only lose a suffix of
+            # committed records — and the batch is not marked 'completed'
+            # until after every record, which means a lost suffix always
+            # leaves the batch un-completed and therefore inert downstream.
+            # Recovery is re-running the file. Pass --sync-commit (sync_commit
+            # to run_file) to keep every commit durable instead.
             with conn.cursor() as cur:
                 cur.execute("SET synchronous_commit = off")
             conn.commit()
-            logger.warning(
+            logger.info(
                 "synchronous_commit is off for this run: a crash can lose recently "
                 "committed records, and the batch would stay un-completed"
             )
@@ -251,90 +275,178 @@ def _drive(
         source_schema_id=ctx.source_schema_id, mapping_reused=ctx.mapping_reused,
     )
 
-    for _columns, row in chain(head, rows):
-        result.rows_read += 1
-        row_number = result.rows_read
-        source_record_id = _source_record_id(row, record_id_column, row_number)
+    # Entities touched since the last commit, in first-touched order, deduped.
+    # A dict is used as an ordered set: dedup is the whole point when the same
+    # hub entity (a shared mailbox domain, a big employer) recurs across many
+    # records in one batch -- it gets rebuilt once for the batch, not once per
+    # record that touched it.
+    pending_golden: dict[tuple[str, str], None] = {}
+    # Outcomes not yet published, because they describe writes not yet
+    # committed. Publishing early would tell a consumer about a record it
+    # cannot yet see if it queries the database.
+    pending_events: list[RecordOutcome] = []
+    since_commit = 0
 
-        # Screened before the database is touched at all. A row carrying a NUL
-        # byte would be refused by the write anyway and end up in exactly this
-        # table — this only spares it the round-trip and the rolled-back
-        # transaction, and names the offending column while the row is still in
-        # hand. The screen is narrower than what Postgres refuses on purpose;
-        # anything it misses is still caught below.
-        fault = screening.unstorable(row)
-        if fault is not None:
-            if fail_fast:
-                raise screening.UnstorablePayload(fault)
-            repository.record_failure(
-                conn, batch_id, source_id, entity_type, row_number,
-                source_record_id, row, "screen",
-                screening.UnstorablePayload(fault),
-            )
-            conn.commit()
-            result.failed += 1
-            logger.error("row %d cannot be stored and was recorded: %s", row_number, fault)
-            continue
-
-        try:
-            outcome = process(
-                ctx, conn, source_record_id, row_number, row,
-                build_golden=build_golden,
-            )
-        except Exception as exc:
-            conn.rollback()
-            if fail_fast:
-                raise
-            # The row is kept with its payload and its error. It has not been
-            # processed, and it has not been lost either.
-            repository.record_failure(
-                conn, batch_id, source_id, entity_type, row_number,
-                source_record_id, row, "process", exc,
-            )
-            conn.commit()
-            result.failed += 1
-            logger.error("row %d failed and was recorded: %s", row_number, exc)
-            continue
-
-        result.observe(outcome)
+    def flush() -> None:
+        nonlocal since_commit
+        if build_golden:
+            for touched_entity_id, touched_entity_type in pending_golden:
+                # Its own savepoint, same reasoning as a record's: a bug that
+                # trips on one entity's history must not cost the batch of
+                # records committing this flush, and must not leave that one
+                # entity's golden values half-old, half-new.
+                savepoint_cur.execute("SAVEPOINT golden_svp")
+                try:
+                    written, refreshed, _unchanged, _retired = build_entity(
+                        conn, touched_entity_id, touched_entity_type
+                    )
+                except Exception:
+                    savepoint_cur.execute("ROLLBACK TO SAVEPOINT golden_svp")
+                    logger.exception(
+                        "golden rebuild failed for entity %s (%s); its values "
+                        "are stale until `golden build --entity-id %s` is run",
+                        touched_entity_id, touched_entity_type, touched_entity_id,
+                    )
+                    continue
+                savepoint_cur.execute("RELEASE SAVEPOINT golden_svp")
+                result.golden_written += written + refreshed
+            pending_golden.clear()
+        conn.commit()
+        since_commit = 0
         if producer is not None:
-            producer.publish(
-                events.TOPIC_RECORD_PROCESSED,
-                # Keyed by entity where there is one, so everything about an
-                # entity lands on one partition and a consumer sees its records
-                # in order. Records without an entity key on themselves.
-                key=outcome.entity_id or outcome.record_id,
-                event=events.record_processed(
-                    outcome.record_id, batch_id, source_id, entity_type,
-                    outcome.entity_id, outcome.validation_status,
-                    outcome.quarantined, outcome.match_decision,
-                    datetime.now(UTC),
-                ),
-            )
-
-        if result.rows_read % PROGRESS_EVERY == 0:
-            logger.info(
-                "batch %s: %d row(s), %d processed, %d failed",
-                batch_id, result.rows_read, result.processed, result.failed,
-            )
-
-        # The record-at-a-time path validates inline, so nothing else would
-        # ever notice a feed that has stopped being usable -- there is no
-        # per-batch verdict to inspect afterwards. This is where that gets
-        # caught, and it is checked against this run's own counts rather than
-        # the whole table so one bad file cannot be hidden by a good history.
-        if result.processed % BREAKER_CHECK_EVERY == 0:
-            verdict = breaker.trip_if_broken(
-                conn, result.processed, result.invalid,
-                result.failed_rule_counts, context=f"batch {batch_id}",
-            )
-            if verdict.tripped:
-                result.stopped = True
-                logger.error(
-                    "batch %s stopped after %d record(s): %s",
-                    batch_id, result.processed, verdict.reason(),
+            for outcome in pending_events:
+                producer.publish(
+                    events.TOPIC_RECORD_PROCESSED,
+                    # Keyed by entity where there is one, so everything about
+                    # an entity lands on one partition and a consumer sees its
+                    # records in order. Records without an entity key on
+                    # themselves.
+                    key=outcome.entity_id or outcome.record_id,
+                    event=events.record_processed(
+                        outcome.record_id, batch_id, source_id, entity_type,
+                        outcome.entity_id, outcome.validation_status,
+                        outcome.quarantined, outcome.match_decision,
+                        datetime.now(UTC),
+                    ),
                 )
-                break
+            pending_events.clear()
+
+    with conn.cursor() as savepoint_cur:
+        for _columns, row in chain(head, rows):
+            result.rows_read += 1
+            row_number = result.rows_read
+            source_record_id = _source_record_id(row, record_id_column, row_number)
+
+            # Screened before the database is touched at all. A row carrying a
+            # NUL byte would be refused by the write anyway and end up in
+            # exactly this table — this only spares it the round-trip and the
+            # rolled-back transaction, and names the offending column while
+            # the row is still in hand. The screen is narrower than what
+            # Postgres refuses on purpose; anything it misses is still caught
+            # below.
+            fault = screening.unstorable(row)
+            if fault is not None:
+                if fail_fast:
+                    # Commit what this batch already got right before raising:
+                    # otherwise the exception unwinding out of run_file's
+                    # `with connect()` rolls back the whole open transaction,
+                    # taking every already-succeeded, not-yet-committed record
+                    # in this batch down with the one that was never going to
+                    # be recorded anyway.
+                    if since_commit:
+                        flush()
+                    raise screening.UnstorablePayload(fault)
+                # Its own savepoint: record_failure must not be undone by a
+                # later record's rollback sharing this transaction, and must
+                # not itself take the transaction down if something about the
+                # payload defeats it.
+                savepoint_cur.execute("SAVEPOINT record_svp")
+                repository.record_failure(
+                    conn, batch_id, source_id, entity_type, row_number,
+                    source_record_id, row, "screen",
+                    screening.UnstorablePayload(fault),
+                )
+                savepoint_cur.execute("RELEASE SAVEPOINT record_svp")
+                since_commit += 1
+                result.failed += 1
+                logger.error("row %d cannot be stored and was recorded: %s", row_number, fault)
+                if since_commit >= COMMIT_BATCH_SIZE:
+                    flush()
+                continue
+
+            savepoint_cur.execute("SAVEPOINT record_svp")
+            try:
+                outcome = process(
+                    ctx, conn, source_record_id, row_number, row,
+                    build_golden=build_golden,
+                )
+            except Exception as exc:
+                # Undoes only this record's partial writes. Every record
+                # already released from its own savepoint earlier in this same
+                # open transaction is untouched.
+                savepoint_cur.execute("ROLLBACK TO SAVEPOINT record_svp")
+                if fail_fast:
+                    # Same reasoning as the screening branch above: flush the
+                    # batch's earlier successes before the exception unwinds
+                    # and takes the whole open transaction with it.
+                    if since_commit:
+                        flush()
+                    raise
+                # The row is kept with its payload and its error. It has not
+                # been processed, and it has not been lost either.
+                repository.record_failure(
+                    conn, batch_id, source_id, entity_type, row_number,
+                    source_record_id, row, "process", exc,
+                )
+                savepoint_cur.execute("RELEASE SAVEPOINT record_svp")
+                since_commit += 1
+                result.failed += 1
+                logger.error("row %d failed and was recorded: %s", row_number, exc)
+                if since_commit >= COMMIT_BATCH_SIZE:
+                    flush()
+                continue
+            else:
+                savepoint_cur.execute("RELEASE SAVEPOINT record_svp")
+
+            for pair in outcome.pending_golden:
+                pending_golden.setdefault(pair, None)
+            result.observe(outcome)
+            since_commit += 1
+            if producer is not None:
+                pending_events.append(outcome)
+
+            if since_commit >= COMMIT_BATCH_SIZE:
+                flush()
+
+            if result.rows_read % PROGRESS_EVERY == 0:
+                logger.info(
+                    "batch %s: %d row(s), %d processed, %d failed",
+                    batch_id, result.rows_read, result.processed, result.failed,
+                )
+
+            # The record-at-a-time path validates inline, so nothing else
+            # would ever notice a feed that has stopped being usable -- there
+            # is no per-batch verdict to inspect afterwards. This is where
+            # that gets caught, and it is checked against this run's own
+            # counts rather than the whole table so one bad file cannot be
+            # hidden by a good history.
+            if result.processed % BREAKER_CHECK_EVERY == 0:
+                verdict = breaker.trip_if_broken(
+                    conn, result.processed, result.invalid,
+                    result.failed_rule_counts, context=f"batch {batch_id}",
+                )
+                if verdict.tripped:
+                    result.stopped = True
+                    logger.error(
+                        "batch %s stopped after %d record(s): %s",
+                        batch_id, result.processed, verdict.reason(),
+                    )
+                    break
+
+    # Whatever the loop ended on -- exhausted, or stopped by the breaker --
+    # anything since the last commit is still owed one, or it never lands.
+    if since_commit:
+        flush()
 
     if producer is not None:
         producer.flush()
@@ -431,6 +543,13 @@ def reprocess_errors(
                     result.still_failing += 1
                     logger.error("row %s failed again: %s", error["row_number"], exc)
                     continue
+
+                # process() only names the entities that need rebuilding; a
+                # low-volume replay path has no batch to dedupe them across,
+                # so each is rebuilt right away, same as before process()
+                # stopped doing this itself.
+                for touched_entity_id, touched_entity_type in outcome.pending_golden:
+                    build_entity(conn, touched_entity_id, touched_entity_type)
 
                 repository.mark_reprocessed(
                     conn, str(error["error_id"]), outcome.record_id, actor

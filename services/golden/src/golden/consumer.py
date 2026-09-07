@@ -72,6 +72,13 @@ def run() -> int:
             "group.id": CONSUMER_GROUP,
             "auto.offset.reset": "earliest",
             "enable.auto.commit": False,
+            # One message is one whole file's batch, handled synchronously --
+            # the default 300000ms was already observed kicking this consumer
+            # out of its group mid-batch on a 100k-record file, forcing a full
+            # rejoin-and-redo of the whole golden rebuild. Liveness is already
+            # covered separately by the heartbeat file (common.heartbeat), so
+            # this can be generous.
+            "max.poll.interval.ms": 3_600_000,
         }
     )
     consumer.subscribe([events.TOPIC_ENTITIES_RESOLVED])

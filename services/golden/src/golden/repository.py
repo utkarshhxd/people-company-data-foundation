@@ -197,9 +197,72 @@ def insert_value(
         return str(cur.fetchone()[0])
 
 
-# A field that loses every supporting observation stops being current but is not
-# deleted: we once believed it, and that stays on the record.
-retire_field = close_value
+def insert_values(conn: psycopg.Connection, rows: list[tuple]) -> None:
+    """Bulk-insert brand-new golden values that have no current row to
+    supersede -- the common case on a first load, where every field is new.
+
+    Safe to batch precisely because nothing downstream in the same build needs
+    a golden_id back: link_supersession only runs when there WAS an existing
+    value, and that path stays row-at-a-time in insert_value/link_supersession.
+
+    Row shape matches insert_value's column order: (entity_id, entity_type,
+    canonical_field, value, raw_value, strategy, confidence, winning_record_id,
+    winning_source_id, supporting_sources, competing_values, evidence_as_Json).
+    """
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO golden_attribute (
+                entity_id, entity_type, canonical_field, value, raw_value,
+                strategy, confidence, winning_record_id, winning_source_id,
+                supporting_sources, competing_values, evidence
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            rows,
+        )
+
+
+def refresh_evidence_many(conn: psycopg.Connection, rows: list[tuple]) -> None:
+    """Same as refresh_evidence, batched. Row shape: (confidence,
+    supporting_sources, competing_values, evidence_as_Json, winning_record_id,
+    winning_source_id, raw_value, golden_id) -- refresh_evidence's own
+    parameter order.
+    """
+    if not rows:
+        return
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            UPDATE golden_attribute
+            SET confidence         = %s,
+                supporting_sources = %s,
+                competing_values   = %s,
+                evidence           = %s,
+                winning_record_id  = %s,
+                winning_source_id  = %s,
+                raw_value          = %s
+            WHERE golden_id = %s
+            """,
+            rows,
+        )
+
+
+def retire_fields(conn: psycopg.Connection, golden_ids: list[str]) -> None:
+    """A field that loses every supporting observation stops being current but
+    is not deleted: we once believed it, and that stays on the record. This is
+    the same update close_value does; every retiring row gets the identical
+    SET, so one UPDATE .. WHERE golden_id = ANY(...) covers them all in one
+    round trip."""
+    if not golden_ids:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE golden_attribute SET valid_to = now() WHERE golden_id = ANY(%s)",
+            (golden_ids,),
+        )
 
 
 def golden_for_entity(conn: psycopg.Connection, entity_id: str) -> list[dict[str, Any]]:

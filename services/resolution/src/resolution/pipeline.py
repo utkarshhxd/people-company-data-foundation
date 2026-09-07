@@ -1,9 +1,13 @@
 """Resolve a batch's records to real-world entities.
 
-Records are processed in file order and committed one at a time, so a record can
-match an entity created by the record two rows above it. That determinism is
-worth more here than throughput: the same file must always produce the same
-entities, or nothing downstream can be reproduced.
+Records are processed in file order on one connection, so a record can match an
+entity created by the record two rows above it -- each later record's read sees
+every earlier record's write, because they share one open transaction until it
+commits. That determinism is what must hold; the commit boundary is free to
+move. Commits are batched (COMMIT_BATCH_SIZE at a time) rather than one per
+record: a crash mid-batch loses only the still-uncommitted tail, and
+`resolvable_records` already excludes anything already linked, so resuming
+picks back up exactly where the batch left off, whatever the batch size was.
 """
 
 import logging
@@ -29,6 +33,11 @@ from resolution.scoring import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Records per commit. See the module docstring for why batching this is safe:
+# resumability comes from resolvable_records excluding already-linked records,
+# not from the commit granularity.
+COMMIT_BATCH_SIZE = 500
 
 
 class BatchNotResolvable(Exception):
@@ -207,7 +216,7 @@ def resolve_batch(batch_id: str) -> ResolveResult:
             )
 
         linked = created = candidates = 0
-        for record in records:
+        for i, record in enumerate(records, start=1):
             outcome = resolve_record(conn, record, batch, batch_id)
             if outcome == DECISION_LINK:
                 linked += 1
@@ -215,8 +224,12 @@ def resolve_batch(batch_id: str) -> ResolveResult:
                 created += 1
                 if outcome == DECISION_REVIEW:
                     candidates += 1
-            # Per record, so the next one can match what this one just created.
-            conn.commit()
+            # Batched, not per record -- see the module docstring. The next
+            # record still matches what this one just created, because reads
+            # within the same open transaction see it regardless of commit.
+            if i % COMMIT_BATCH_SIZE == 0:
+                conn.commit()
+        conn.commit()
 
         counts = repository.resolution_counts(conn, batch_id)
         logger.info(

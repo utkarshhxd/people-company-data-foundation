@@ -10,11 +10,19 @@ import logging
 from dataclasses import dataclass
 
 from common.db import connect
+from psycopg.types.json import Json
 
 from golden import repository
 from golden.strategies import choose
 
 logger = logging.getLogger(__name__)
+
+# Entities per commit. build_entity is idempotent (an unchanged value keeps its
+# valid_from and writes nothing new), and build_batch always reprocesses every
+# entity entities_for_batch returns regardless of what a previous attempt
+# already committed -- so a crash mid-batch already means "redo the batch"
+# either way, at any commit granularity. Batching just cuts the fsync count.
+COMMIT_BATCH_SIZE = 500
 
 
 class NothingToBuild(Exception):
@@ -45,6 +53,15 @@ def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int,
     current = repository.current_values(conn, entity_id)
     written = refreshed = unchanged = retired = 0
 
+    # Brand-new fields (no current row to supersede) and refreshed-evidence
+    # fields (same value, new support) are batched: neither needs a result
+    # back before the next field can be decided, so nothing about deciding
+    # field N+1 depends on field N's write having happened yet. A changed
+    # value stays row-at-a-time below, because link_supersession needs the
+    # new row's golden_id back from insert_value.
+    new_value_rows: list[tuple] = []
+    refresh_rows: list[tuple] = []
+
     for canonical_field, field_observations in observations.items():
         choice = choose(entity_type, canonical_field, field_observations)
         if choice is None:
@@ -61,29 +78,52 @@ def build_entity(conn, entity_id: str, entity_type: str) -> tuple[int, int, int,
             if (existing["supporting_sources"] != choice.supporting_sources
                     or existing["competing_values"] != choice.competing_values
                     or float(existing["confidence"]) != choice.confidence):
-                repository.refresh_evidence(conn, str(existing["golden_id"]), choice)
+                refresh_rows.append((
+                    choice.confidence, choice.supporting_sources,
+                    choice.competing_values, Json(choice.evidence),
+                    choice.winning_record_id, choice.winning_source_id,
+                    choice.raw_value, str(existing["golden_id"]),
+                ))
                 refreshed += 1
             else:
                 unchanged += 1
             continue
 
-        # Close the outgoing value first: only one row per (entity, field) may be
-        # current, and the partial unique index enforces it.
-        if existing is not None:
-            repository.close_value(conn, str(existing["golden_id"]))
+        if existing is None:
+            new_value_rows.append((
+                entity_id, entity_type, canonical_field, choice.value,
+                choice.raw_value, choice.strategy, choice.confidence,
+                choice.winning_record_id, choice.winning_source_id,
+                choice.supporting_sources, choice.competing_values,
+                Json(choice.evidence),
+            ))
+            written += 1
+            continue
+
+        # A genuinely changed value: close the outgoing row first (only one row
+        # per (entity, field) may be current, and the partial unique index
+        # enforces it), then link the closed row to what replaced it. Kept
+        # row-at-a-time because link_supersession needs insert_value's
+        # RETURNING golden_id.
+        repository.close_value(conn, str(existing["golden_id"]))
         golden_id = repository.insert_value(
             conn, entity_id, entity_type, canonical_field, choice
         )
-        if existing is not None:
-            repository.link_supersession(conn, str(existing["golden_id"]), golden_id)
+        repository.link_supersession(conn, str(existing["golden_id"]), golden_id)
         written += 1
+
+    repository.insert_values(conn, new_value_rows)
+    repository.refresh_evidence_many(conn, refresh_rows)
 
     # A field with no supporting observation left stops being current. This
     # happens after a merge changes which records back an entity.
-    for canonical_field, existing in current.items():
-        if canonical_field not in observations:
-            repository.retire_field(conn, str(existing["golden_id"]))
-            retired += 1
+    retire_ids = [
+        str(existing["golden_id"])
+        for canonical_field, existing in current.items()
+        if canonical_field not in observations
+    ]
+    repository.retire_fields(conn, retire_ids)
+    retired = len(retire_ids)
 
     return written, refreshed, unchanged, retired
 
@@ -113,7 +153,7 @@ def build_one(entity_id: str) -> BuildResult:
 
 def _build_all(conn, entities: list[dict]) -> BuildResult:
     written = refreshed = unchanged = retired = 0
-    for entity in entities:
+    for i, entity in enumerate(entities, start=1):
         w, f, u, r = build_entity(
             conn, str(entity["entity_id"]), entity["entity_type"]
         )
@@ -121,9 +161,10 @@ def _build_all(conn, entities: list[dict]) -> BuildResult:
         refreshed += f
         unchanged += u
         retired += r
-        # Per entity: a failure part-way leaves earlier entities correctly built
-        # rather than rolling back work that was already right.
-        conn.commit()
+        # Batched, not per entity -- see COMMIT_BATCH_SIZE above.
+        if i % COMMIT_BATCH_SIZE == 0:
+            conn.commit()
+    conn.commit()
 
     counts = repository.golden_counts(conn)
     logger.info(

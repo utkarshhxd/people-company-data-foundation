@@ -122,12 +122,16 @@ def lock_keys(
     if not keys:
         return
     ordered = sorted({(k.key_type, k.key_value) for k in keys})
+    lock_names = [f"{entity_type}:{key_type}:{key_value}" for key_type, key_value in ordered]
     with conn.cursor() as cur:
-        for key_type, key_value in ordered:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (f"{entity_type}:{key_type}:{key_value}",),
-            )
+        # One round trip instead of one per key. unnest preserves array order,
+        # so the locks are still taken in the same sorted order as before --
+        # that ordering is what keeps two transactions locking an overlapping
+        # key set from deadlocking each other.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(x, 0)) FROM unnest(%s::text[]) AS t(x)",
+            (lock_names,),
+        )
 
 
 def find_candidates(

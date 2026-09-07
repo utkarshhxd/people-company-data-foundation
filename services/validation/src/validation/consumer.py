@@ -106,6 +106,12 @@ def run() -> int:
             "group.id": CONSUMER_GROUP,
             "auto.offset.reset": "earliest",
             "enable.auto.commit": False,
+            # One message is one whole file's batch, handled synchronously.
+            # The default 300000ms is comfortable at 100k records but not
+            # guaranteed at 1M; see the same setting in resolution/golden's
+            # consumers for what happens when it trips. Liveness is already
+            # covered separately by the heartbeat file (common.heartbeat).
+            "max.poll.interval.ms": 3_600_000,
         }
     )
     consumer.subscribe([events.TOPIC_RECORDS_NORMALIZED])

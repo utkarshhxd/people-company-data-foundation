@@ -78,6 +78,10 @@ def run() -> int:
             "group.id": CONSUMER_GROUP,
             "auto.offset.reset": "earliest",
             "enable.auto.commit": False,
+            # Mapping only samples a batch's columns, not its rows, so this is
+            # unlikely to ever run long -- set to match its siblings anyway so
+            # the whole chain has one consistent, documented poll interval.
+            "max.poll.interval.ms": 3_600_000,
         }
     )
     consumer.subscribe([events.TOPIC_BATCH_INGESTED])

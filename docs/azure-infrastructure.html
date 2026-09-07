@@ -1,0 +1,2060 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Azure Infrastructure, End to End</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap');
+
+  :root {
+    --bg: #f7f4ee;
+    --bg-raised: #efeadf;
+    --bg-sunk: #e9e3d5;
+    --ink: #201c16;
+    --ink-soft: #55503f;
+    --ink-faint: #8c8571;
+    --line: #ddd5c2;
+    --line-soft: #e7e0d0;
+    --accent: #b5541f;
+    --accent-soft: #f0dcc4;
+    --green: #3f6e63;
+    --green-soft: #d3e2dc;
+    --red: #9c3b2e;
+    --red-soft: #f2d9d3;
+    --blue: #3a5f86;
+    --blue-soft: #d5e2ee;
+    --code-bg: #eae3d2;
+    --code-ink: #4a4331;
+    --shadow: 0 1px 2px rgba(32, 28, 22, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17140f;
+      --bg-raised: #211d16;
+      --bg-sunk: #100e0a;
+      --ink: #ece6d8;
+      --ink-soft: #bcb29b;
+      --ink-faint: #7d7563;
+      --line: #33301f;
+      --line-soft: #272419;
+      --accent: #e0a56d;
+      --accent-soft: #3d2c1a;
+      --green: #8fc3b3;
+      --green-soft: #223330;
+      --red: #e09080;
+      --red-soft: #3a201a;
+      --blue: #8fb4d8;
+      --blue-soft: #1e2b38;
+      --code-bg: #221f16;
+      --code-ink: #d9cfb6;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #17140f;
+    --bg-raised: #211d16;
+    --bg-sunk: #100e0a;
+    --ink: #ece6d8;
+    --ink-soft: #bcb29b;
+    --ink-faint: #7d7563;
+    --line: #33301f;
+    --line-soft: #272419;
+    --accent: #e0a56d;
+    --accent-soft: #3d2c1a;
+    --green: #8fc3b3;
+    --green-soft: #223330;
+    --red: #e09080;
+    --red-soft: #3a201a;
+    --blue: #8fb4d8;
+    --blue-soft: #1e2b38;
+    --code-bg: #221f16;
+    --code-ink: #d9cfb6;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; scroll-padding-top: 1.5rem; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size: 1.05rem;
+    line-height: 1.66;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  img { max-width: 100%; }
+
+  /* ---------- layout ---------- */
+
+  .shell {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3rem;
+  }
+
+  @media (min-width: 1080px) {
+    .shell {
+      grid-template-columns: 232px minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+
+  nav.toc {
+    font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  @media (min-width: 1080px) {
+    nav.toc {
+      position: sticky;
+      top: 0;
+      max-height: 100vh;
+      overflow-y: auto;
+      padding: 3rem 0 3rem;
+      border-right: 1px solid var(--line-soft);
+      margin-right: 0.5rem;
+    }
+  }
+
+  nav.toc .toc-title {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.68rem;
+    color: var(--accent);
+    margin: 0 0 1rem;
+    font-weight: 600;
+  }
+
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 0 0 0.15rem; }
+
+  nav.toc a {
+    display: block;
+    color: var(--ink-faint);
+    text-decoration: none;
+    padding: 0.28rem 0.6rem 0.28rem 0.55rem;
+    border-left: 2px solid transparent;
+    border-radius: 0 3px 3px 0;
+  }
+
+  nav.toc a:hover { color: var(--ink); background: var(--bg-raised); }
+  nav.toc a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  nav.toc a .num {
+    display: inline-block;
+    min-width: 1.6em;
+    color: var(--ink-faint);
+    opacity: 0.75;
+  }
+  nav.toc a.active .num { color: var(--accent); opacity: 1; }
+
+  main { padding: 3rem 0 6rem; min-width: 0; }
+
+  @media (max-width: 1079px) {
+    nav.toc {
+      padding-top: 2rem;
+      order: 2;
+    }
+    main { order: 1; padding-bottom: 2rem; }
+    nav.toc-mobile-wrap { order: 0; }
+  }
+
+  /* ---------- masthead ---------- */
+
+  header.masthead { margin-bottom: 3rem; }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+  }
+
+  h1 {
+    font-weight: 600;
+    font-size: clamp(2rem, 4.6vw, 2.8rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+
+  .dek {
+    font-size: 1.14rem;
+    color: var(--ink-soft);
+    max-width: 44em;
+    margin: 0 0 2rem;
+  }
+
+  .statbar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 0 0 1.4rem;
+  }
+  .stat { background: var(--bg-raised); padding: 0.85rem 1rem; }
+  .stat .k {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+  .stat .v {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.02rem;
+    font-weight: 600;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .v small { font-size: 0.7rem; font-weight: 400; color: var(--ink-faint); }
+
+  /* ---------- sections ---------- */
+
+  section { margin: 0 0 3.6rem; scroll-margin-top: 1.5rem; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.85rem;
+    margin: 0 0 0.4rem;
+    border-top: 2px solid var(--ink);
+    padding-top: 0.9rem;
+  }
+  .sec-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent);
+    flex: none;
+    padding-top: 0.35rem;
+  }
+  h2 {
+    font-size: clamp(1.4rem, 3vw, 1.75rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1.2;
+  }
+  .sec-sub {
+    color: var(--ink-faint);
+    font-size: 0.95rem;
+    margin: 0 0 1.6rem;
+    font-style: italic;
+  }
+
+  h3 {
+    font-size: 1.16rem;
+    font-weight: 600;
+    margin: 2.2rem 0 0.6rem;
+    letter-spacing: -0.005em;
+  }
+  h3:first-of-type { margin-top: 1.4rem; }
+
+  h4 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 1.6rem 0 0.5rem;
+  }
+
+  p { margin: 0 0 1rem; max-width: 46em; }
+  ul, ol { max-width: 44em; padding-left: 1.3rem; }
+  li { margin-bottom: 0.45rem; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.855em;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    padding: 0.95rem 1.1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0.6rem 0 1.2rem;
+    border: 1px solid var(--line);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+  pre .c { color: var(--ink-faint); font-style: italic; }
+  pre .hl { color: var(--accent); font-weight: 600; }
+
+  /* ---------- the three lenses ---------- */
+
+  .lens {
+    border-left: 3px solid var(--line);
+    padding: 0.1rem 0 0.1rem 1.1rem;
+    margin: 1.2rem 0 1.4rem;
+  }
+  .lens > .lens-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.64rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    font-weight: 600;
+    display: inline-block;
+    padding: 0.14em 0.5em;
+    border-radius: 3px;
+    margin-bottom: 0.5rem;
+  }
+  .lens.why { border-left-color: var(--accent); }
+  .lens.why > .lens-tag { color: var(--accent); background: var(--accent-soft); }
+  .lens.run { border-left-color: var(--green); }
+  .lens.run > .lens-tag { color: var(--green); background: var(--green-soft); }
+  .lens.plain { border-left-color: var(--blue); }
+  .lens.plain > .lens-tag { color: var(--blue); background: var(--blue-soft); }
+  .lens p:last-child, .lens pre:last-child, .lens ul:last-child { margin-bottom: 0; }
+
+  /* ---------- callouts ---------- */
+
+  .box {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.2rem 1.35rem;
+    margin: 1.3rem 0;
+    box-shadow: var(--shadow);
+  }
+  .box > .box-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.75rem;
+    font-weight: 600;
+  }
+  .box p:last-child, .box pre:last-child, .box ul:last-child, .box table:last-child { margin-bottom: 0; }
+  .box.danger { background: var(--red-soft); border-color: var(--red); }
+  .box.danger > .box-title { color: var(--red); }
+  .box.good { background: var(--green-soft); border-color: var(--green); }
+  .box.good > .box-title { color: var(--green); }
+
+  /* ---------- tables ---------- */
+
+  .tw { overflow-x: auto; margin: 1rem 0 1.4rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    min-width: 460px;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.8rem 0.5rem 0;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+    font-variant-numeric: tabular-nums;
+  }
+  th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.64rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td code { font-size: 0.82em; }
+  tbody tr:hover { background: var(--bg-raised); }
+
+  .pill {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    padding: 0.14em 0.55em;
+    border-radius: 999px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.warn { background: var(--accent-soft); color: var(--accent); }
+  .pill.bad { background: var(--red-soft); color: var(--red); }
+  .pill.neutral { background: var(--bg-sunk); color: var(--ink-faint); }
+
+  /* ---------- step list ---------- */
+
+  ol.steps { list-style: none; padding: 0; counter-reset: step; max-width: 48em; }
+  ol.steps > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 2.7rem;
+    margin-bottom: 1.7rem;
+  }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0.05rem;
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+  }
+  ol.steps > li > .step-title {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+
+  /* ---------- diagram ---------- */
+
+  figure { margin: 1.6rem 0 1.8rem; }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    margin-top: 0.7rem;
+    line-height: 1.5;
+  }
+  .svg-wrap {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.2rem;
+    overflow-x: auto;
+  }
+  svg text { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+  /* ---------- misc ---------- */
+
+  .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 1.1rem;
+    font-size: 0.92rem;
+    margin: 0;
+  }
+  .kv dt {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.76rem;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    padding-top: 0.18rem;
+  }
+  .kv dd { margin: 0; }
+
+  hr.soft { border: 0; border-top: 1px solid var(--line-soft); margin: 2rem 0; }
+
+  details.drift {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.7rem 1rem;
+    margin: 0.8rem 0;
+    background: var(--bg-raised);
+  }
+  details.drift summary {
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  details.drift[open] summary { margin-bottom: 0.7rem; }
+
+  footer.endnote {
+    margin-top: 4rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.74rem;
+    color: var(--ink-faint);
+    line-height: 1.7;
+  }
+
+  @media (max-width: 620px) {
+    body { font-size: 1rem; }
+    main { padding-top: 2rem; }
+    pre { font-size: 0.72rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <nav class="toc">
+    <p class="toc-title">Contents</p>
+    <ol>
+      <li><a href="#read"><span class="num">00</span>How to read this</a></li>
+      <li><a href="#picture"><span class="num">01</span>The whole thing, one page</a></li>
+      <li><a href="#rule"><span class="num">02</span>The rule that decided everything</a></li>
+      <li><a href="#account"><span class="num">03</span>Layer 0 — account &amp; region</a></li>
+      <li><a href="#bootstrap"><span class="num">04</span>Layer 1 — Terraform's own state</a></li>
+      <li><a href="#terraform"><span class="num">05</span>Layer 2 — the cluster module</a></li>
+      <li><a href="#k3s"><span class="num">06</span>Layer 3 — k3s, line by line</a></li>
+      <li><a href="#images"><span class="num">07</span>Layer 4 — images &amp; registry</a></li>
+      <li><a href="#kustomize"><span class="num">08</span>Layer 5 — kustomize</a></li>
+      <li><a href="#workloads"><span class="num">09</span>Layer 6 — what runs inside</a></li>
+      <li><a href="#storage"><span class="num">10</span>Storage: three kinds</a></li>
+      <li><a href="#network"><span class="num">11</span>Networking, end to end</a></li>
+      <li><a href="#secrets"><span class="num">12</span>Secrets</a></li>
+      <li><a href="#sequence"><span class="num">13</span>The full deploy sequence</a></li>
+      <li><a href="#inventory"><span class="num">14</span>Live inventory</a></li>
+      <li><a href="#cost"><span class="num">15</span>Cost &amp; stopping the bill</a></li>
+      <li><a href="#broke"><span class="num">16</span>What broke, and why</a></li>
+      <li><a href="#own"><span class="num">17</span>What you now own</a></li>
+      <li><a href="#history"><span class="num">18</span>How it got here</a></li>
+      <li><a href="#gaps"><span class="num">19</span>Open items &amp; doc drift</a></li>
+      <li><a href="#teardown"><span class="num">20</span>Teardown</a></li>
+      <li><a href="#card"><span class="num">21</span>Quick reference card</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <header class="masthead">
+    <p class="eyebrow">PCDF · Infrastructure reference · snapshot 2026-08-31</p>
+    <h1>The Azure Infrastructure, End to End</h1>
+    <p class="dek">Every resource that exists in Azure for this project, how it came to exist, and why it is shaped the way it is — from an empty subscription to fourteen running pods. Written to be read straight through once, then used as a reference afterwards.</p>
+
+    <div class="statbar">
+      <div class="stat"><span class="k">Resource groups</span><span class="v">3</span></div>
+      <div class="stat"><span class="k">Virtual machines</span><span class="v">3 <small>· 4 vCPU total</small></span></div>
+      <div class="stat"><span class="k">Managed services</span><span class="v">0</span></div>
+      <div class="stat"><span class="k">k3s version</span><span class="v">v1.36.4</span></div>
+      <div class="stat"><span class="k">Workloads</span><span class="v">14</span></div>
+      <div class="stat"><span class="k">Volumes</span><span class="v">8</span></div>
+    </div>
+
+    <div class="box">
+      <p class="box-title">What this document is a snapshot of</p>
+      <dl class="kv">
+        <dt>Subscription</dt><dd><code>Azure subscription 1</code> — <code>263ba326-248d-46c7-a28c-a46b1dee0960</code></dd>
+        <dt>Tenant</dt><dd><code>25a92115-182b-45f0-a191-2329cb85d663</code> (<code>m.rahulraj24@gmail.com</code>)</dd>
+        <dt>Captured</dt><dd>2026-08-31, from <code>az resource list</code> and <code>kubectl</code> against the live cluster</dd>
+        <dt>Source of truth</dt><dd><code>deploy/azure/terraform/</code> — this document describes it, it does not replace it</dd>
+      </dl>
+      <p style="margin-top:0.9rem;font-size:0.9rem;color:var(--ink-soft)">The live values below (IP addresses, node placement, pod names) go stale the next time anyone runs <code>terraform apply</code> or a pod reschedules. The <em>structure</em> — what exists and why — is stable, and is the part worth reading. Regenerate the volatile parts with the commands in §14.</p>
+    </div>
+  </header>
+
+  <!-- ================================================================= -->
+  <section id="read">
+    <div class="sec-head"><span class="sec-num">00</span><h2>How to read this</h2></div>
+    <p class="sec-sub">Three different people need three different things from the same facts. Every section serves all three, in the same order, marked.</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>What the thing <em>is</em>, assuming you have never used it. If you already know what a Network Security Group is, skip these.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Why</span>
+      <p>Why this choice and not the obvious alternative — the trade-off, what was rejected, what it costs. This is the part that answers "defend this decision."</p>
+    </div>
+
+    <div class="lens run">
+      <span class="lens-tag">Run</span>
+      <p>The command. Copy-pasteable, in the order you would actually type it.</p>
+    </div>
+
+    <p>The document is layered bottom-up: an empty Azure account at §03, three Linux VMs by §05, a Kubernetes cluster by §06, and an application running on it by §09. Nothing above a layer is needed to understand it, and each layer only depends on the ones below.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="picture">
+    <div class="sec-head"><span class="sec-num">01</span><h2>The whole thing, one page</h2></div>
+    <p class="sec-sub">If you read nothing else.</p>
+
+    <p>There is one application — PCDF, a data pipeline that ingests vendor files, resolves them into entities, and serves a golden record through a review console. It needs a database, a message broker, monitoring, and about eight of its own processes.</p>
+
+    <p><strong>None of that is bought from Azure.</strong> Azure sells this project exactly three categories of thing: <em>virtual machines</em>, <em>a virtual network to put them on</em>, and <em>a blob container to keep a state file in</em>. Everything else — Kubernetes itself, Postgres, Kafka, Prometheus, Grafana, shared storage — runs as containers on those VMs.</p>
+
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 760 430" role="img" aria-label="Layer diagram: Azure supplies three VMs, a network and a blob container; k3s runs on the VMs; the application runs on k3s.">
+          <!-- Application layer -->
+          <rect x="10" y="12" width="740" height="86" rx="7" fill="var(--green-soft)" stroke="var(--green)" stroke-width="1.2"/>
+          <text x="26" y="34" font-size="10.5" font-weight="600" fill="var(--green)">LAYER 6 · APPLICATION — 14 workloads, portable to any cluster</text>
+          <g font-size="9.5" fill="var(--ink)">
+            <rect x="26" y="44" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="74" y="58" text-anchor="middle">watcher</text>
+            <rect x="130" y="44" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="178" y="58" text-anchor="middle">mapping</text>
+            <rect x="234" y="44" width="112" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="290" y="58" text-anchor="middle">normalization</text>
+            <rect x="354" y="44" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="402" y="58" text-anchor="middle">validation</text>
+            <rect x="458" y="44" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="506" y="58" text-anchor="middle">resolution</text>
+            <rect x="562" y="44" width="80" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="602" y="58" text-anchor="middle">golden</text>
+            <rect x="650" y="44" width="84" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="692" y="58" text-anchor="middle">console</text>
+            <rect x="26" y="70" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="74" y="84" text-anchor="middle">postgres</text>
+            <rect x="130" y="70" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="178" y="84" text-anchor="middle">kafka</text>
+            <rect x="234" y="70" width="112" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="290" y="84" text-anchor="middle">prometheus</text>
+            <rect x="354" y="70" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="402" y="84" text-anchor="middle">alertmanager</text>
+            <rect x="458" y="70" width="96" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="506" y="84" text-anchor="middle">grafana</text>
+            <rect x="562" y="70" width="80" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="602" y="84" text-anchor="middle">nfs-server</text>
+            <rect x="650" y="70" width="84" height="20" rx="3" fill="var(--bg)" stroke="var(--line)"/><text x="692" y="84" text-anchor="middle">backup cron</text>
+          </g>
+
+          <!-- kustomize -->
+          <rect x="10" y="108" width="740" height="42" rx="7" fill="var(--blue-soft)" stroke="var(--blue)" stroke-width="1.2"/>
+          <text x="26" y="128" font-size="10.5" font-weight="600" fill="var(--blue)">LAYER 5 · KUSTOMIZE — infra/ (plain Kubernetes) + deploy/azure (registry name only)</text>
+          <text x="26" y="142" font-size="9.5" fill="var(--ink-soft)">the only line in the whole tree that changes between clouds</text>
+
+          <!-- k3s -->
+          <rect x="10" y="160" width="740" height="52" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="26" y="180" font-size="10.5" font-weight="600" fill="var(--accent)">LAYER 3–4 · KUBERNETES (k3s v1.36.4) + ghcr.io images</text>
+          <text x="26" y="196" font-size="9.5" fill="var(--ink-soft)">installed by a shell script that names no cloud · 1 server node + 2 agent nodes · Traefik and ServiceLB disabled</text>
+          <text x="26" y="207" font-size="9.5" fill="var(--ink-soft)">8 application images live at ghcr.io/utkarshcruxhub, pulled with an imagePullSecret</text>
+
+          <!-- Azure line -->
+          <line x1="10" y1="224" x2="750" y2="224" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="380" y="238" font-size="9.5" font-weight="600" fill="var(--red)" text-anchor="middle">▲ everything above is portable   ·   everything below is the only Azure-specific code ▼</text>
+
+          <!-- Azure layer -->
+          <rect x="10" y="248" width="500" height="132" rx="7" fill="var(--bg-raised)" stroke="var(--line)" stroke-width="1.2"/>
+          <text x="26" y="268" font-size="10.5" font-weight="600" fill="var(--ink-soft)">LAYER 2 · RESOURCE GROUP  pcdf  (indiasouthcentral)</text>
+          <rect x="26" y="278" width="468" height="90" rx="5" fill="var(--bg)" stroke="var(--line)" stroke-dasharray="3 3"/>
+          <text x="38" y="294" font-size="9" fill="var(--ink-faint)">pcdf-vnet 10.0.0.0/16 → subnet "nodes" 10.0.1.0/24 → NSG pcdf-nodes-nsg</text>
+          <g font-size="9">
+            <rect x="38" y="304" width="140" height="52" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+            <text x="108" y="320" text-anchor="middle" font-weight="600" fill="var(--ink)">pcdf-master</text>
+            <text x="108" y="333" text-anchor="middle" fill="var(--ink-soft)">B2s · 2 vCPU / 4 GiB</text>
+            <text x="108" y="346" text-anchor="middle" fill="var(--ink-soft)">10.0.1.6 · k3s server</text>
+
+            <rect x="186" y="304" width="140" height="52" rx="4" fill="var(--bg-raised)" stroke="var(--line)"/>
+            <text x="256" y="320" text-anchor="middle" font-weight="600" fill="var(--ink)">pcdf-worker-0</text>
+            <text x="256" y="333" text-anchor="middle" fill="var(--ink-soft)">B1ms · 1 vCPU / 2 GiB</text>
+            <text x="256" y="346" text-anchor="middle" fill="var(--ink-soft)">10.0.1.5 · k3s agent</text>
+
+            <rect x="334" y="304" width="140" height="52" rx="4" fill="var(--bg-raised)" stroke="var(--line)"/>
+            <text x="404" y="320" text-anchor="middle" font-weight="600" fill="var(--ink)">pcdf-worker-1</text>
+            <text x="404" y="333" text-anchor="middle" fill="var(--ink-soft)">B1ms · 1 vCPU / 2 GiB</text>
+            <text x="404" y="346" text-anchor="middle" fill="var(--ink-soft)">10.0.1.4 · k3s agent</text>
+          </g>
+
+          <rect x="524" y="248" width="226" height="132" rx="7" fill="var(--bg-raised)" stroke="var(--line)" stroke-width="1.2"/>
+          <text x="540" y="268" font-size="10.5" font-weight="600" fill="var(--ink-soft)">LAYER 1 · pcdf-tfstate</text>
+          <text x="540" y="284" font-size="9" fill="var(--ink-soft)">(southindia)</text>
+          <rect x="540" y="296" width="194" height="66" rx="4" fill="var(--bg)" stroke="var(--line)"/>
+          <text x="637" y="316" font-size="9" text-anchor="middle" font-weight="600" fill="var(--ink)">pcdftfstated1060b0f</text>
+          <text x="637" y="331" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">StorageV2 · Standard_LRS</text>
+          <text x="637" y="345" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">container: tfstate</text>
+          <text x="637" y="356" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">blob versioning on</text>
+
+          <text x="380" y="400" font-size="9.5" fill="var(--ink-faint)" text-anchor="middle">LAYER 0 · Azure subscription 263ba326-248d-46c7-a28c-a46b1dee0960 · 3 static public IPs · 3 StandardSSD OS disks</text>
+          <text x="380" y="416" font-size="9.5" fill="var(--ink-faint)" text-anchor="middle">no AKS · no ACR · no managed Postgres · no Event Hubs · no managed Grafana</text>
+        </svg>
+      </div>
+      <figcaption>The layer cake. The dashed red line is the portability boundary: everything above it runs unchanged on GKE, EKS, or three machines in a cupboard. Everything below it is roughly 400 lines of Terraform.</figcaption>
+    </figure>
+
+    <h3>The five sentences</h3>
+    <ol>
+      <li><strong>Terraform bootstrap</strong> creates one storage account, once, to hold Terraform's own state file so it does not live on a laptop.</li>
+      <li><strong>Terraform main</strong> creates a resource group, a virtual network, one subnet, one firewall, three public IPs, three network cards and three Ubuntu VMs.</li>
+      <li><strong>cloud-init</strong> on each VM runs a shell script that installs k3s — the master becomes the control plane, the two workers join it using a generated shared token.</li>
+      <li><strong>Eight images</strong> are built from the same Dockerfiles Compose uses and pushed to ghcr.io; the cluster pulls them with a pull secret.</li>
+      <li><strong>kustomize</strong> applies the whole stack into the <code>pcdf</code> namespace; a Job runs the migrations, then fourteen workloads settle.</li>
+    </ol>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="rule">
+    <div class="sec-head"><span class="sec-num">02</span><h2>The rule that decided everything</h2></div>
+    <p class="sec-sub">One sentence from ADR 0021 explains nine tenths of the choices below.</p>
+
+    <div class="box">
+      <p class="box-title">The line</p>
+      <p style="font-size:1.1rem;margin-bottom:0.6rem"><em>"Everything runs as pods. The cloud supplies a cluster and a registry, and nothing else."</em></p>
+      <p style="margin:0;font-size:0.88rem;color:var(--ink-soft)">— <a href="decisions/0021-the-whole-stack-on-a-cluster.md">ADR 0021</a>. Later tightened by <a href="decisions/0023-remove-aks-and-acr-dependency.md">ADR 0023</a> to: the cloud supplies <em>virtual machines</em>, and nothing else.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Why</span>
+      <p>Azure sells a managed Postgres with point-in-time restore, a managed Kafka endpoint (Event Hubs), and a managed Grafana. Each one deletes a StatefulSet and some operational work. Taken together they also turn "can we run this somewhere else" from a redeploy into a rewrite.</p>
+      <p>This system's entire premise is that <em>data outlives the thing displaying it</em>. A pipeline that cannot be moved is a strange thing to build under that premise. So the trade was made deliberately and in the other direction: accept the operational burden, keep the portability.</p>
+    </div>
+
+    <h3>What was rejected, and on what grounds</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Rejected</th><th>What it would have fixed</th><th>Why not</th></tr></thead>
+        <tbody>
+          <tr><td>Azure Database for PostgreSQL</td><td>Backups, patching, failover — all three gaps this design leaves open</td><td>It is the one dependency that would be genuinely hard to leave. <strong>The data is the system.</strong></td></tr>
+          <tr><td>Azure Event Hubs (Kafka endpoint)</td><td>Running your own broker</td><td>Its Kafka endpoint is SASL_SSL; every consumer here assumes PLAINTEXT. A code change wearing a config change's clothes.</td></tr>
+          <tr><td>AKS (managed Kubernetes)</td><td>Control-plane HA, etcd backups, node patching, version upgrades</td><td>Provisioning it is Azure-specific code. Removing it left the VM as the only Azure-shaped resource — and every cloud sells a VM identically. See §18.</td></tr>
+          <tr><td>ACR (Azure Container Registry)</td><td>An <code>imagePullSecret</code> per cluster</td><td>Same reason. ghcr.io is reachable from anywhere; ACR's <code>--attach-acr</code> identity binding only works on AKS.</td></tr>
+          <tr><td>A Helm chart</td><td>Templating between environments</td><td>The variation between environments is <em>one registry hostname</em>. kustomize expresses that without adding a templating language to a repo that has none.</td></tr>
+          <tr><td>Azure Files (<code>azurefile-csi</code>)</td><td>The one shared-filesystem volume</td><td>A cloud-managed StorageClass is exactly the dependency that disappears when the cluster is self-managed. Replaced by an NFS server pod — see §10.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p><strong>ADR</strong> = Architecture Decision Record. A short markdown file recording one decision, its context, and its consequences, written at the time the decision was made. This repo has 23 of them in <code>docs/decisions/</code>. They are the reason it is possible to answer "why is it like this" three months later.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="account">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Layer 0 — the account and the region</h2></div>
+    <p class="sec-sub">Before any resource exists there is a subscription, a tenant, and a decision about where on the planet to put things.</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>Azure's hierarchy, outermost first: a <strong>tenant</strong> is the identity directory (who can log in). A <strong>subscription</strong> is the billing boundary (who pays). A <strong>resource group</strong> is a folder inside a subscription — every resource lives in exactly one, and deleting the group deletes everything in it. A <strong>region</strong> is a physical datacentre location; every resource is pinned to one.</p>
+    </div>
+
+    <h4>What exists</h4>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Tenant</td><td><code>25a92115-182b-45f0-a191-2329cb85d663</code></td></tr>
+          <tr><td>Subscription</td><td><code>Azure subscription 1</code> / <code>263ba326-248d-46c7-a28c-a46b1dee0960</code>, state <span class="pill ok">Enabled</span></td></tr>
+          <tr><td>Signed-in user</td><td><code>m.rahulraj24@gmail.com</code></td></tr>
+          <tr><td>Cluster region</td><td><code>indiasouthcentral</code> — "India South Central"</td></tr>
+          <tr><td>State-storage region</td><td><code>southindia</code> — "South India"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The region choice is not cosmetic</h3>
+
+    <div class="lens why">
+      <span class="lens-tag">Why</span>
+      <p>An Azure free-trial subscription caps you at <strong>4 vCPUs per region</strong>. That single number dictated the shape of the entire cluster.</p>
+      <p><code>southindia</code> only offers the newer B-series v2 sizes, whose <em>smallest</em> option is 2 vCPU. Three nodes × 2 vCPU = 6, which blows the cap — so on <code>southindia</code> the 1-master/2-worker shape is simply impossible on trial credit.</p>
+      <p><code>indiasouthcentral</code> still carries the legacy B-series family (<code>B1s</code>, <code>B1ms</code>, <code>B2s</code>, <code>B2ms</code>) unrestricted. That allows <code>B2s</code> (2 vCPU) + <code>B1ms</code> (1) + <code>B1ms</code> (1) = <strong>exactly 4</strong>. The real three-node architecture, fitting the cap precisely.</p>
+      <p>This is the difference between "we couldn't test the real shape, so we tested a single node" and "we tested the real shape." It was worth moving region for.</p>
+    </div>
+
+    <div class="box">
+      <p class="box-title">Why the state storage sits in a different region</p>
+      <p>The bootstrap module (§04) defaults to <code>southindia</code> and was applied before the cluster region moved. It was never moved because it does not matter: the state blob is read once at the start of a Terraform run and written once at the end. Cross-region latency on two HTTP requests is noise, and there is no runtime dependency between the cluster and its state file at all.</p>
+    </div>
+
+    <h3>The resource group that nobody created</h3>
+    <p><code>NetworkWatcherRG</code> holds three <code>NetworkWatcher_*</code> resources — one each for <code>centralindia</code>, <code>southindia</code> and <code>indiasouthcentral</code>. Nobody ran a command to create them. Azure creates a Network Watcher automatically, per region, the first time a virtual network appears in that region on the subscription. They are free at this scale and safe to leave alone.</p>
+    <p>The three regions are a fossil record of where VNets have existed on this subscription: <code>southindia</code> (the original AKS cluster), <code>centralindia</code> (an earlier, since-deleted attempt or the subscription default), and <code>indiasouthcentral</code> (today's cluster).</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run</span>
+<pre><code><span class="c"># who am I, and which subscription am I about to spend money in</span>
+az account show -o json
+
+<span class="c"># everything that exists, everywhere</span>
+az resource list -o table
+
+<span class="c"># which regions offer what</span>
+az account list-locations -o table</code></pre>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="bootstrap">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Layer 1 — Terraform's own state</h2></div>
+    <p class="sec-sub"><code>deploy/azure/terraform/bootstrap/</code> · run once per environment, then never again.</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>Terraform keeps a <strong>state file</strong> — a JSON record mapping "the resource I declared in code" to "the actual thing that exists in Azure, with this ID." Without it, Terraform cannot tell the difference between "create a VM" and "the VM I already made is fine, leave it." The state file <em>is</em> Terraform's memory.</p>
+      <p>By default that file sits next to your <code>.tf</code> files on disk. That is fine until a second person runs Terraform, or your laptop dies.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Why a separate bootstrap module exists</span>
+      <p>A chicken-and-egg problem: Terraform cannot create the storage account it is about to use as its own backend, because to use a backend it must already exist. So one tiny module creates it, keeps its <em>own</em> state locally (gitignored), and is never touched again.</p>
+      <p>This one step stays imperative by necessity. Everything after it is declarative.</p>
+    </div>
+
+    <h3>What it creates — three resources</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Resource</th><th>Name</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td><code>azurerm_resource_group</code></td><td><code>pcdf-tfstate</code></td><td><code>southindia</code></td></tr>
+          <tr><td><code>azurerm_storage_account</code></td><td><code>pcdftfstated1060b0f</code></td><td>StorageV2, Standard_LRS, HTTPS-only, <strong>blob versioning enabled</strong></td></tr>
+          <tr><td><code>azurerm_storage_container</code></td><td><code>tfstate</code></td><td>access type <code>private</code></td></tr>
+          <tr><td><code>random_id</code></td><td><code>suffix</code></td><td>4 bytes → <code>d1060b0f</code>, appended to the account name</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Why the random suffix</h4>
+    <p>Storage account names are <strong>globally unique across all of Azure</strong> and may contain only lowercase letters and digits — no hyphens, no underscores. A fixed name like <code>pcdftfstate</code> would collide with whoever bootstraps a second environment, anywhere in the world. Four random bytes solve it: <code>pcdftfstate</code> + <code>d1060b0f</code>.</p>
+
+    <h4>Why blob versioning is on</h4>
+    <p>State can contain secrets, and a corrupted <code>apply</code> that writes bad state is otherwise unrecoverable — you would be left reconciling reality against a broken file by hand. With versioning, every write keeps the previous blob, so a bad state is one restore away rather than gone.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — once per environment</span>
+<pre><code>terraform -chdir=deploy/azure/terraform/bootstrap init
+terraform -chdir=deploy/azure/terraform/bootstrap apply
+
+<span class="c"># prints the exact backend-config flags the main module needs</span>
+terraform -chdir=deploy/azure/terraform/bootstrap output backend_config_hint</code></pre>
+    </div>
+
+    <h3>How the main module is wired to it</h3>
+    <p><code>versions.tf</code> declares an <strong>intentionally empty</strong> backend block:</p>
+<pre><code>terraform {
+  required_version = "&gt;= 1.5"
+  backend "azurerm" {}   <span class="c"># partial on purpose</span>
+}</code></pre>
+    <p>Account and container names are per-environment and per-subscription, so hardcoding them in a committed file would be wrong. They are supplied at <code>init</code> time instead:</p>
+<pre><code>terraform -chdir=deploy/azure/terraform init \
+  -backend-config="resource_group_name=pcdf-tfstate" \
+  -backend-config="storage_account_name=pcdftfstated1060b0f" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=pcdf-cluster.tfstate"</code></pre>
+    <p>The live backend, read from <code>.terraform/terraform.tfstate</code>, confirms exactly that wiring, with state blob key <code>pcdf-cluster.tfstate</code> and Terraform <code>1.15.8</code>.</p>
+
+    <div class="box good">
+      <p class="box-title">Interview note</p>
+      <p>"Where does your Terraform state live, and what happens if two people apply at once?" — Remote, in Azure Blob Storage, versioned. The <code>azurerm</code> backend takes a <strong>blob lease</strong> as a lock for the duration of an apply, so a concurrent run fails fast with a lock error rather than racing. That is the actual reason to use a remote backend, not just durability.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="terraform">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Layer 2 — the cluster module, resource by resource</h2></div>
+    <p class="sec-sub"><code>deploy/azure/terraform/</code> · ~400 lines · <strong>the only Azure-specific code in the repository.</strong></p>
+
+    <p>Four files: <code>versions.tf</code> (providers and backend), <code>variables.tf</code> (the knobs), <code>network.tf</code> (group, network, firewall), <code>vms.tf</code> (the machines), <code>outputs.tf</code> (what you need afterwards). Below, every resource it declares, in the order Terraform must create them.</p>
+
+    <h3>The knobs — <code>variables.tf</code></h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>What it does &amp; why that default</th></tr></thead>
+        <tbody>
+          <tr><td><code>resource_group</code></td><td><code>pcdf</code></td><td>Also the name prefix for every resource — <code>pcdf-vnet</code>, <code>pcdf-master</code>, and so on.</td></tr>
+          <tr><td><code>location</code></td><td><code>indiasouthcentral</code></td><td>The legacy-B-series region. See §03 for the vCPU arithmetic.</td></tr>
+          <tr><td><code>master_vm_size</code></td><td><code>Standard_B2s</code></td><td>2 vCPU / 4 GiB. The control plane needs more headroom than an agent.</td></tr>
+          <tr><td><code>worker_vm_size</code></td><td><code>Standard_B1ms</code></td><td>1 vCPU / 2 GiB each. 2 + 1 + 1 = 4, the trial cap exactly.</td></tr>
+          <tr><td><code>worker_count</code></td><td><code>2</code></td><td>The "2 worker nodes" in the requested shape. Set to <code>0</code> for a single-VM cluster.</td></tr>
+          <tr><td><code>admin_username</code></td><td><code>pcdf</code></td><td>The Linux user created on every VM, and the owner of the copied-out kubeconfig.</td></tr>
+          <tr><td><code>ssh_public_key</code></td><td><span class="pill bad">no default</span></td><td>Required. A default here would be a public key nobody generated, silently locking everyone out.</td></tr>
+          <tr><td><code>admin_cidr</code></td><td><code>0.0.0.0/0</code></td><td><span class="pill bad">open to the internet</span> for SSH and the k3s API. See the warning below.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="box danger">
+      <p class="box-title">⚠ Security — the single most important line in this document</p>
+      <p><code>admin_cidr</code> defaults to <code>0.0.0.0/0</code>, and the live NSG confirms it was applied that way. <strong>Right now, port 22 (SSH) and port 6443 (the Kubernetes API) on all three VMs accept connections from any address on the internet.</strong></p>
+      <p>SSH is key-only (Azure's <code>admin_ssh_key</code> block disables password auth), and the k3s API requires a client certificate, so neither is trivially breakable. But both are exposed to untargeted internet-wide scanning, and 6443 in particular is a known scan target.</p>
+      <p><strong>The fix is one flag on the next apply:</strong></p>
+<pre style="background:var(--bg);border-color:var(--red)"><code>terraform -chdir=deploy/azure/terraform apply \
+  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)" \
+  <span class="hl">-var="admin_cidr=$(curl -s ifconfig.me)/32"</span></code></pre>
+      <p style="margin-bottom:0">That narrows both rules to your current public IP. It has to be re-run when your IP changes, which is the honest cost of not standing up a bastion or a VPN.</p>
+    </div>
+
+    <h3>Creation order — what depends on what</h3>
+
+    <ol class="steps">
+      <li>
+        <span class="step-title"><code>azurerm_resource_group.main</code> → <code>pcdf</code></span>
+        <p>The folder. Everything else names it. Deleting this group deletes the entire cluster in one call — which is exactly what <code>terraform destroy</code> effectively arranges.</p>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_virtual_network.main</code> → <code>pcdf-vnet</code>, <code>10.0.0.0/16</code></span>
+        <div class="lens plain" style="margin-top:0.4rem">
+          <span class="lens-tag">Plain</span>
+          <p>A VNet is a private network inside Azure. Machines on it can reach each other by private IP; nothing outside reaches in unless you explicitly attach a public IP or a gateway. <code>10.0.0.0/16</code> reserves 65,536 addresses — vastly more than needed, but address space inside a VNet is free and running out later is painful.</p>
+        </div>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_subnet.nodes</code> → <code>10.0.1.0/24</code></span>
+        <p>One subnet, 256 addresses, holding every node. The live private IPs land inside it: master <code>10.0.1.6</code>, worker-0 <code>10.0.1.5</code>, worker-1 <code>10.0.1.4</code>. (Azure reserves the first four addresses of every subnet, so allocation starts at <code>.4</code>.)</p>
+        <div class="lens why" style="margin-top:0.4rem">
+          <span class="lens-tag">Why one subnet</span>
+          <p>Subnets are a boundary for routing and security rules. Splitting control plane and workers into separate subnets would let you write different firewall rules per role — but here every node runs the same k3s daemon and talks to every other node on the same ports, so a split would buy two subnets and zero isolation.</p>
+        </div>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_network_security_group.nodes</code> → <code>pcdf-nodes-nsg</code></span>
+        <div class="lens plain" style="margin-top:0.4rem">
+          <span class="lens-tag">Plain</span>
+          <p>An NSG is a stateful firewall. Rules are evaluated by <strong>priority</strong>, lowest number first, and the first match wins. Azure appends invisible default rules at priority 65000+ which allow all traffic within the VNet and deny everything else inbound — so anything not explicitly allowed below is blocked.</p>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Prio</th><th>Name</th><th>Port</th><th>Source</th><th>Why it exists</th></tr></thead>
+            <tbody>
+              <tr><td>100</td><td><code>ssh</code></td><td>22/TCP</td><td><code>0.0.0.0/0</code> <span class="pill bad">open</span></td><td>Operator access. Key-only.</td></tr>
+              <tr><td>110</td><td><code>k3s-api</code></td><td>6443/TCP</td><td><code>0.0.0.0/0</code> <span class="pill bad">open</span></td><td><code>kubectl</code> from your laptop. This is what the kubeconfig points at.</td></tr>
+              <tr><td>120</td><td><code>http-https</code></td><td>80, 443/TCP</td><td><code>*</code></td><td>For an ingress controller that is <strong>not installed</strong> — opened ahead of time so applying the Ingress later needs no network change.</td></tr>
+              <tr><td>130</td><td><code>node-to-node</code></td><td>all, any protocol</td><td><code>10.0.1.0/24</code> <span class="pill ok">internal</span></td><td>kubelet (10250), flannel VXLAN (8472/udp), NFS (2049/111/20048), the NodePort range. Restricted to the subnet, never the internet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>Why rule 130 is a blanket allow rather than an enumerated list:</strong> Kubernetes' internal port surface is large, version-dependent and grows (add an ingress controller, a CNI plugin, a service mesh, and the list changes). Enumerating it produces a rule set that breaks silently on the next component. Scoping the blanket rule to the subnet's own CIDR gives the same practical isolation — nothing outside <code>10.0.1.0/24</code> matches it — with none of the brittleness.</p>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_subnet_network_security_group_association.nodes</code></span>
+        <p>Binds the NSG to the subnet. Attaching at the subnet level rather than per-NIC means a new node is covered by the firewall the moment it is created, with nothing extra to remember.</p>
+      </li>
+      <li>
+        <span class="step-title"><code>random_password.k3s_token</code> — 32 characters, no specials</span>
+        <p>The shared secret that lets an agent node prove it may join the cluster. Generated rather than declared as a variable, so nobody has to invent one or store one.</p>
+        <div class="lens why" style="margin-top:0.4rem">
+          <span class="lens-tag">Why it never crosses the network in the clear</span>
+          <p>It is rendered into the two cloud-init scripts and delivered through Azure's VM provisioning channel — not fetched by the VM over the network at boot. It does, however, end up in the Terraform state file, which is exactly why that file lives in a private, versioned blob container and not in git (§04). <code>special = false</code> avoids shell-quoting hazards when the value is interpolated into a <code>sh</code> script.</p>
+        </div>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_public_ip.master</code> + <code>.worker[0..1]</code> — Standard SKU, <strong>Static</strong></span>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Name</th><th>Address</th><th>SKU</th><th>Allocation</th></tr></thead>
+            <tbody>
+              <tr><td><code>pcdf-master-ip</code></td><td><code>172.198.58.10</code></td><td>Standard</td><td>Static</td></tr>
+              <tr><td><code>pcdf-worker-0-ip</code></td><td><code>172.198.57.183</code></td><td>Standard</td><td>Static</td></tr>
+              <tr><td><code>pcdf-worker-1-ip</code></td><td><code>172.198.58.36</code></td><td>Standard</td><td>Static</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>Static, not Dynamic:</strong> a dynamic IP is released when the VM is deallocated and a different one is assigned on restart. The master's address is baked into the kubeconfig and into the k3s server certificate's SAN list — if it changed on every stop/start, both would break every time. Static costs a little more and removes an entire class of "it worked yesterday."</p>
+        <p><strong>Why the workers have public IPs at all:</strong> they do not need one to join the cluster (they join over the master's <em>private</em> IP). They exist for direct SSH to a worker when diagnosing a node-level problem — a `containerd` failure, a full disk — where going through the master is an extra hop. It is a convenience with a cost: three billable addresses instead of one, and two more machines answering on port 22. Setting <code>worker_count</code> aside, dropping worker public IPs entirely and using the master as a jump host would be a strictly tighter design.</p>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_network_interface.master</code> + <code>.worker[0..1]</code></span>
+        <p>A NIC is the object that actually joins a VM to a subnet. Each one has a single <code>ip_configuration</code> named <code>internal</code>: a dynamic private IP from the subnet, plus the matching static public IP attached. The VM resource references the NIC, not the subnet directly — this indirection is what lets Azure detach and reattach network identity independently of the machine.</p>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_linux_virtual_machine.master</code> → <code>pcdf-master</code></span>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Setting</th><th>Value</th><th>Note</th></tr></thead>
+            <tbody>
+              <tr><td>size</td><td><code>Standard_B2s</code></td><td>2 vCPU / 4 GiB, burstable</td></tr>
+              <tr><td>image</td><td>Canonical <code>0001-com-ubuntu-server-jammy</code>, <code>22_04-lts-gen2</code>, <code>latest</code></td><td>Ubuntu 22.04 LTS, Gen2 (UEFI). Live kernel: <code>6.8.0-1064-azure</code></td></tr>
+              <tr><td>os_disk</td><td><code>StandardSSD_LRS</code>, caching <code>ReadWrite</code></td><td>SSD without Premium pricing; LRS = 3 copies in one datacentre</td></tr>
+              <tr><td>auth</td><td><code>admin_ssh_key</code> only</td><td>No password. Azure disables password auth when this block is present.</td></tr>
+              <tr><td>custom_data</td><td>base64 of the rendered <code>install-server.sh.tpl</code></td><td>See §06</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="lens why" style="margin-top:0.4rem">
+          <span class="lens-tag">Why <code>version = "latest"</code> is a deliberate risk</span>
+          <p>Pinning an exact image version makes builds reproducible but leaves you on an unpatched image until someone bumps it. <code>latest</code> means a rebuilt node gets current security patches automatically, at the price of two nodes built months apart not being byte-identical. For a cluster where nodes are cattle and the state lives in volumes, the patch freshness is worth more than the reproducibility.</p>
+        </div>
+      </li>
+      <li>
+        <span class="step-title"><code>azurerm_linux_virtual_machine.worker[0..1]</code> → <code>pcdf-worker-0</code>, <code>pcdf-worker-1</code></span>
+        <p>Identical, except: <code>Standard_B1ms</code> (1 vCPU / 2 GiB), rendered with <code>install-agent.sh.tpl</code>, and — the important line —</p>
+<pre><code>depends_on = [azurerm_linux_virtual_machine.master]</code></pre>
+        <p>Terraform would otherwise create all three VMs in parallel, and an agent booting before the server exists finds nothing at <code>https://10.0.1.6:6443</code> and fails to join. This forces the ordering. It is not a complete fix — the master VM being <em>created</em> is not the same as k3s being <em>ready</em> on it — but k3s agents retry their join indefinitely, so a few seconds of "connection refused" in the agent's log resolves itself.</p>
+        <p>The agent template is rendered with <code>azurerm_network_interface.master.private_ip_address</code>, not the public one. <strong>Node-to-node traffic stays inside the VNet</strong> rather than leaving Azure's network and coming back — faster, free, and not exposed.</p>
+      </li>
+    </ol>
+
+    <h3>What comes back out — <code>outputs.tf</code></h3>
+<pre><code>terraform -chdir=deploy/azure/terraform output
+
+master_public_ip   = "172.198.58.10"
+worker_public_ips  = ["172.198.57.183", "172.198.58.36"]
+ssh_master_command = "ssh pcdf@172.198.58.10"
+kubeconfig_command = "scp pcdf@172.198.58.10:~/.kube/config ./kubeconfig"</code></pre>
+    <p>The last two are outputs that are literally commands to paste. A small thing that removes a step where an operator would otherwise assemble a string from three other outputs and get it subtly wrong.</p>
+
+    <div class="box">
+      <p class="box-title">Complete Azure resource count from this module</p>
+      <p style="margin-bottom:0">1 resource group · 1 VNet · 1 subnet · 1 NSG · 1 NSG association · 3 public IPs · 3 NICs · 3 VMs · 3 OS disks (created implicitly by the VMs) = <strong>17 objects</strong>, from ~400 lines of HCL, reproducible with one command.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="k3s">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Layer 3 — k3s, line by line</h2></div>
+    <p class="sec-sub"><code>infra/k3s/install-server.sh.tpl</code> and <code>install-agent.sh.tpl</code> · under <code>infra/</code>, not <code>deploy/azure/</code>, on purpose.</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p><strong>k3s</strong> is a full, certified Kubernetes distribution packaged as a single ~70 MB binary. It bundles the API server, scheduler, controller manager, kubelet and containerd into one process, and defaults to an embedded SQLite/etcd datastore. It is real Kubernetes — <code>kubectl</code> cannot tell the difference — just assembled for machines that do not have 16 GiB to spare on a control plane.</p>
+      <p><strong>cloud-init</strong> is the standard Linux mechanism for running a script on a VM's first boot. Azure's <code>custom_data</code> field is how you hand a script to it.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Why these files live under <code>infra/</code> and not <code>deploy/azure/</code></span>
+      <p>Neither script names a cloud. Their only inputs are a join token and an IP address. A second cloud's Terraform module — GCP, AWS, a rack — reuses them <em>unchanged</em>; only the module that renders them differs. Putting them under <code>deploy/azure/</code> would have implied a coupling that does not exist.</p>
+    </div>
+
+    <h3>The server script, statement by statement</h3>
+<pre><code>#!/bin/sh
+set -eu</code></pre>
+    <p><code>-e</code> exit on any failure, <code>-u</code> error on an unset variable. In a cloud-init script that nobody watches run, the alternative is a half-installed node that looks fine until a pod lands on it.</p>
+
+<pre><code>export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq nfs-common</code></pre>
+    <div class="lens why">
+      <span class="lens-tag">Why the NFS client is installed before Kubernetes</span>
+      <p>The cluster runs its own NFS server pod for the shared <code>/data</code> volume (§10), and k3s does <strong>not</strong> taint the server node — any pod, including one needing that mount, can be scheduled onto the master. NFS mounts are performed by <em>kubelet on the host</em>, not inside the container, so the host needs <code>mount.nfs</code>.</p>
+      <p>Without this package the failure is: <code>bad option; ... you might need a /sbin/mount.&lt;type&gt; helper program</code>, and the pod sits in <code>ContainerCreating</code> forever. That message does not say "install nfs-common," which is why the comment in the file does.</p>
+      <p><code>DEBIAN_FRONTEND=noninteractive</code> stops apt from opening a dialog on a machine with no terminal attached — a classic cloud-init hang.</p>
+    </div>
+
+<pre><code>curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_EXEC="server <span class="hl">--disable traefik</span> <span class="hl">--disable servicelb</span> <span class="hl">--tls-san ${public_ip}</span>" \
+  K3S_TOKEN="${k3s_token}" \
+  sh -</code></pre>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Flag</th><th>Effect</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><code>server</code></td><td>This node runs the control plane</td><td>The "1 master."</td></tr>
+          <tr><td><code>--disable traefik</code></td><td>Skips k3s's bundled ingress controller</td><td><code>31-review-console-ingress.yaml</code> is written for ingress-nginx — "the portable choice," per its own header. Installing an ingress controller should be a deliberate step, not a side effect of installing Kubernetes.</td></tr>
+          <tr><td><code>--disable servicelb</code></td><td>Skips k3s's bundled load balancer (Klipper)</td><td>Nothing here requests a <code>LoadBalancer</code> Service. Every Service is <code>ClusterIP</code>; external access is a port-forward or a future Ingress.</td></tr>
+          <tr><td><code>--tls-san ${public_ip}</code></td><td>Adds the public IP to the API server certificate</td><td><strong>Load-bearing.</strong> Without it the cert only covers <code>127.0.0.1</code> and the private IP, and <code>kubectl</code> from your laptop fails TLS verification against <code>172.198.58.10</code>.</td></tr>
+          <tr><td><code>K3S_TOKEN</code></td><td>Sets the join secret</td><td>Fixing it here means agents can be given the same value; otherwise k3s generates one and you must read it off the master.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+<pre><code>mkdir -p /home/${admin_username}/.kube
+cp /etc/rancher/k3s/k3s.yaml /home/${admin_username}/.kube/config
+sed -i "s/127.0.0.1/${public_ip}/" /home/${admin_username}/.kube/config
+chown -R ${admin_username}:${admin_username} /home/${admin_username}/.kube</code></pre>
+    <p>k3s writes its kubeconfig to <code>/etc/rancher/k3s/k3s.yaml</code>, root-owned, pointing at <code>https://127.0.0.1:6443</code>. Those three lines copy it to the admin user's home, rewrite the address to the public IP, and fix ownership — so that <code>scp</code>-ing it to a laptop produces a file that works immediately, with no editing.</p>
+    <p>The live <code>deploy/azure/terraform/kubeconfig</code> confirms it: <code>server: https://172.198.58.10:6443</code>.</p>
+
+    <div class="box danger">
+      <p class="box-title">⚠ The kubeconfig is a root credential</p>
+      <p><code>deploy/azure/terraform/kubeconfig</code> holds a client certificate for <code>system:masters</code> — <strong>full admin on the cluster, no expiry check beyond the cert's own one-year validity.</strong> Anyone with that file plus network reach to port 6443 (which, per §05, is currently the whole internet) owns the cluster.</p>
+      <p>It is gitignored. Confirm before every commit; treat it like an SSH private key.</p>
+    </div>
+
+    <h3>The agent script</h3>
+<pre><code>#!/bin/sh
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq nfs-common
+
+curl -sfL https://get.k3s.io | \
+  K3S_URL="https://${server_ip}:6443" \
+  K3S_TOKEN="${k3s_token}" \
+  sh -</code></pre>
+    <p>Shorter, and the difference is the whole mechanism: <strong>setting <code>K3S_URL</code> is what makes the installer configure an agent instead of a server.</strong> There is no <code>agent</code> subcommand to pass — the presence of a server URL is the switch. <code>${server_ip}</code> is the master's <em>private</em> address, <code>10.0.1.6</code>.</p>
+
+    <h3>What actually came up</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Node</th><th>Status</th><th>Role</th><th>Version</th><th>Internal IP</th><th>OS / runtime</th></tr></thead>
+        <tbody>
+          <tr><td><code>pcdf-master</code></td><td><span class="pill ok">Ready</span></td><td>control-plane, master</td><td><code>v1.36.4+k3s1</code></td><td><code>10.0.1.6</code></td><td>Ubuntu 22.04.5 · containerd 2.3.4</td></tr>
+          <tr><td><code>pcdf-worker-0</code></td><td><span class="pill ok">Ready</span></td><td>—</td><td><code>v1.36.4+k3s1</code></td><td><code>10.0.1.5</code></td><td>Ubuntu 22.04.5 · containerd 2.3.4</td></tr>
+          <tr><td><code>pcdf-worker-1</code></td><td><span class="pill ok">Ready</span></td><td>—</td><td><code>v1.36.4+k3s1</code></td><td><code>10.0.1.4</code></td><td>Ubuntu 22.04.5 · containerd 2.3.4</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Note <code>EXTERNAL-IP</code> is <code>&lt;none&gt;</code> for all three. The VMs have public addresses, but k3s was not told about them — correct, since nothing in the cluster should be routing traffic to a node's public address.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run</span>
+<pre><code><span class="c"># pull the kubeconfig down (the exact command is a Terraform output)</span>
+scp pcdf@172.198.58.10:~/.kube/config ./kubeconfig
+export KUBECONFIG=$PWD/deploy/azure/terraform/kubeconfig
+
+kubectl get nodes -o wide
+
+<span class="c"># if a node never goes Ready, cloud-init is the first place to look</span>
+ssh pcdf@172.198.58.10 'sudo cat /var/log/cloud-init-output.log | tail -50'
+ssh pcdf@172.198.58.10 'sudo systemctl status k3s'
+ssh pcdf@172.198.57.183 'sudo journalctl -u k3s-agent -n 50'</code></pre>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="images">
+    <div class="sec-head"><span class="sec-num">07</span><h2>Layer 4 — images and the registry</h2></div>
+    <p class="sec-sub"><code>infra/scripts/build-and-push.sh</code> · eight images · ghcr.io</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>A cluster cannot build code. It pulls pre-built container images from a <strong>registry</strong> — a server that stores them. Docker Hub is one; GitHub's is <code>ghcr.io</code>; Azure's was ACR.</p>
+    </div>
+
+    <h3>The eight images</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Image</th><th>Built from</th><th>Runs as</th></tr></thead>
+        <tbody>
+          <tr><td><code>pcdf-ingestion</code></td><td><code>services/ingestion/Dockerfile</code></td><td>The <code>migrate</code> Job; CLI ingests</td></tr>
+          <tr><td><code>pcdf-watcher</code></td><td><code>services/record_pipeline/Dockerfile</code></td><td>The watcher Deployment (also carries <code>tools/ops/</code>)</td></tr>
+          <tr><td><code>pcdf-mapping</code></td><td><code>services/mapping/Dockerfile</code></td><td>Stage consumer</td></tr>
+          <tr><td><code>pcdf-normalization</code></td><td><code>services/normalization/Dockerfile</code></td><td>Stage consumer</td></tr>
+          <tr><td><code>pcdf-validation</code></td><td><code>services/validation/Dockerfile</code></td><td>Stage consumer</td></tr>
+          <tr><td><code>pcdf-resolution</code></td><td><code>services/resolution/Dockerfile</code></td><td>Stage consumer</td></tr>
+          <tr><td><code>pcdf-golden</code></td><td><code>services/golden/Dockerfile</code></td><td>Stage consumer</td></tr>
+          <tr><td><code>pcdf-review-console</code></td><td><code>services/review_console/Dockerfile</code></td><td>The web console (also carries <code>tools/sql/</code> at <code>/tools</code>)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><code>enrichment</code> is deliberately absent — it is a CLI run inside a batch window, not something the cluster runs continuously. Run it with <code>kubectl run</code> when needed, the same way Compose runs it with <code>docker compose run</code>.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — from the repository root</span>
+<pre><code>REGISTRY=ghcr.io/utkarshcruxhub sh infra/scripts/build-and-push.sh
+
+<span class="c"># or a dated tag instead of :latest</span>
+REGISTRY=ghcr.io/utkarshcruxhub TAG=2026-08-31 sh infra/scripts/build-and-push.sh</code></pre>
+      <p style="font-size:0.9rem">Must be run from the repo root: every Dockerfile expects the whole workspace as build context, because they <code>COPY libs/</code> and several <code>services/*/pyproject.toml</code> first to get the dependency layer to cache.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Why the script names no cloud</span>
+      <p><code>REGISTRY</code> is just a hostname. Docker Hub, a self-hosted Harbor, ghcr.io and any cloud registry all take the same two commands (<code>docker build -t</code>, <code>docker push</code>). Moving registries is an environment variable, not a code change. That is the same portability argument as everywhere else in this document, applied one layer up.</p>
+    </div>
+
+    <h3>The pull secret — the one place this design is <em>more</em> manual than AKS</h3>
+    <div class="lens why">
+      <span class="lens-tag">Why</span>
+      <p>ACR had <code>az aks update --attach-acr</code>: a role assignment granting the cluster's own managed identity pull rights. No <code>imagePullSecret</code> anywhere, nothing to rotate, nothing to leak.</p>
+      <p>ghcr.io has no per-cluster identity to attach to. So an explicit Kubernetes Secret holding a GitHub PAT stands in, referenced by <code>imagePullSecrets</code> on every Deployment, Job and CronJob that pulls a <code>pcdf-*</code> image.</p>
+      <p><strong>This is a real, honest regression</strong> — one more manual step per environment, and one more credential with an expiry to remember. It was accepted as the price of not depending on AKS. Naming it plainly is better than pretending the migration was free.</p>
+    </div>
+
+    <div class="lens run">
+      <span class="lens-tag">Run</span>
+<pre><code><span class="c"># PAT needs exactly one scope: read:packages</span>
+kubectl create secret docker-registry ghcr-pull-secret -n pcdf \
+  --docker-server=ghcr.io \
+  --docker-username=&lt;github-username&gt; \
+  --docker-password=&lt;github-PAT&gt;</code></pre>
+    </div>
+    <p>Template with the same content: <code>infra/k8s/base/04-registry-secret.example.yaml</code> — deliberately <strong>not</strong> in <code>kustomization.yaml</code>'s <code>resources:</code>, because it is a shape to copy, not a value to apply.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="kustomize">
+    <div class="sec-head"><span class="sec-num">08</span><h2>Layer 5 — kustomize: base and overlays</h2></div>
+    <p class="sec-sub"><code>infra/kustomization.yaml</code> (base) → <code>deploy/azure/</code> → <code>deploy/azure-trial/</code></p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p><strong>kustomize</strong> (built into <code>kubectl</code> as <code>-k</code>) layers changes onto a set of YAML files without templating them. A <em>base</em> holds the real manifests; an <em>overlay</em> points at the base and declares the differences. No placeholders, no <code>{{ }}</code>, no second language — the base is valid Kubernetes YAML you can read on its own.</p>
+    </div>
+
+    <h3>The base: <code>infra/kustomization.yaml</code></h3>
+    <p>Lists 16 manifest files, generates 6 ConfigMaps from the monitoring config, and declares 8 image placeholders (<code>pcdf-watcher:local</code> → <code>REGISTRY/pcdf-watcher:latest</code>).</p>
+
+    <div class="box">
+      <p class="box-title">Two files are deliberately excluded from <code>resources:</code></p>
+      <ul style="margin-bottom:0">
+        <li><code>02-secret.example.yaml</code> — a template with <code>CHANGE-ME</code> values. Applying it would create a Secret whose password is literally <code>CHANGE-ME</code>.</li>
+        <li><code>31-review-console-ingress.yaml</code> — <strong>applying it puts personal data on a public IP.</strong> The console shows names, emails, phone numbers, raw quarantined rows and which vendor sold them. It needs a hostname, a certificate issuer and real API keys first. Read its header, then apply by hand.</li>
+      </ul>
+    </div>
+    <p><code>04-registry-secret.example.yaml</code> is excluded for the same reason as the first — three exclusions, two reasons.</p>
+
+    <h4>Why the ConfigMaps are <em>generated</em> rather than committed</h4>
+    <p>kustomize appends a content hash to each generated ConfigMap's name and rewrites every reference to it. Editing a Prometheus alert rule therefore changes the ConfigMap's name, which changes the Deployment's pod spec, which <strong>rolls the pod automatically</strong>. Committed ConfigMap YAML would leave the old copy mounted until someone remembered to restart — a class of bug where the config on disk and the config in the process silently disagree.</p>
+    <p>The same source files feed Compose and Kubernetes, so an alert rule is written once and runs in both.</p>
+
+    <h4>Why <code>infra/kustomization.yaml</code> is not inside <code>infra/k8s/base/</code></h4>
+    <p>kustomize refuses to read a file outside the directory containing <code>kustomization.yaml</code> (<code>LoadRestrictionsRootOnly</code>, the default). The Prometheus rules, Grafana dashboards and Alertmanager template it needs all live under <code>infra/</code>, so the root has to be <code>infra/</code>.</p>
+
+    <h3>The overlay: <code>deploy/azure/</code></h3>
+    <p>After ADR 0023 it changes <strong>exactly one thing</strong> about the base: the registry the eight images come from.</p>
+<pre><code>images:
+  - name: REGISTRY/pcdf-watcher
+    newName: ghcr.io/utkarshcruxhub/pcdf-watcher
+  <span class="c"># ...and the other seven</span></code></pre>
+    <p>It used to change two — the second was <code>azurefile-csi</code> as the ReadWriteMany StorageClass. That patch disappeared entirely when the cluster started running its own NFS server (§10). The overlay no longer names Azure at all; it lives under <code>deploy/azure/</code> because that is where these VMs happen to run, not because anything in it is coupled to Azure.</p>
+
+    <h4>Why <code>deploy/</code> and not <code>infra/overlays/</code></h4>
+    <p>kustomize errors with <em>"cycle detected"</em> if a base directory contains the overlay pointing at it — and the base root must be <code>infra/</code> (above). So overlays had to move outside. A mechanical constraint, recorded so nobody spends an afternoon rediscovering it.</p>
+
+    <h3>The overlay on the overlay: <code>deploy/azure-trial/</code></h3>
+    <p>Points at <code>../azure</code> and adds one category of change: <strong>CPU and memory requests and limits on every workload.</strong></p>
+
+    <div class="lens why">
+      <span class="lens-tag">Why requests are absent from the base and present here</span>
+      <p>A resource request is a claim about how much of <em>a particular cluster</em> a pod should hold. The base cannot know that; an overlay can. Leaving them out of the base is deliberate, not an omission.</p>
+      <p>On this cluster they are load-bearing. A pod with no request is <strong>BestEffort</strong> QoS, and BestEffort is the first thing the kubelet evicts when a node runs short of memory. Spread across three nodes totalling ~8 GiB, that is not survivable. The requests are also what let the scheduler spread the stack sensibly instead of piling it onto whichever node it looks at first.</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Workload</th><th>CPU req</th><th>Mem req</th><th>CPU lim</th><th>Mem lim</th><th>Reasoning</th></tr></thead>
+        <tbody>
+          <tr><td><code>kafka</code></td><td>300m</td><td>1Gi</td><td>1</td><td>2Gi</td><td>JVM default heap ≈1 GiB. A limit below the heap size is an OOMKill on a timer.</td></tr>
+          <tr><td><code>postgres</code></td><td>300m</td><td>768Mi</td><td>1</td><td>2Gi</td><td>Source of truth for the whole system — the one pod that must never be the one evicted.</td></tr>
+          <tr><td><code>prometheus</code></td><td>150m</td><td>512Mi</td><td>1</td><td>1536Mi</td><td>Memory grows with active series; at this scale that is a few dozen. 90-day retention costs disk, not RAM.</td></tr>
+          <tr><td><code>review-console</code></td><td>150m</td><td>384Mi</td><td>1</td><td>1Gi</td><td>Serves HTTP and runs reconciliation queries. Uploads stream to disk, so file size does not move this number.</td></tr>
+          <tr><td><code>grafana</code></td><td>100m</td><td>256Mi</td><td>500m</td><td>768Mi</td><td>—</td></tr>
+          <tr><td><code>nfs-server</code></td><td>100m</td><td>128Mi</td><td>500m</td><td>512Mi</td><td>Everything reading or writing <code>/data</code> stalls if it is evicted — same treatment as Postgres.</td></tr>
+          <tr><td><code>alertmanager</code></td><td>50m</td><td>64Mi</td><td>200m</td><td>256Mi</td><td>—</td></tr>
+          <tr><td>the 6 Python workers</td><td>100m</td><td>192Mi</td><td>500m</td><td>640Mi</td><td>Idle most of the time, bursting while a file moves. Limit well above request allows the burst; request keeps them out of BestEffort.</td></tr>
+          <tr><td><code>postgres-backup</code></td><td>100m</td><td>128Mi</td><td>500m</td><td>512Mi</td><td>A CronJob pod with no request competes with the running stack at 02:00.</td></tr>
+          <tr><td><code>migrate</code></td><td>100m</td><td>192Mi</td><td>500m</td><td>512Mi</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="box">
+      <p class="box-title">Stated plainly, from the overlay's own header</p>
+      <p style="margin-bottom:0">"There is no high availability of any kind. One k3s server means the control plane is a single point of failure, and B-series are burstable — they throttle under sustained load rather than sizing for it. <strong>This is a shape for proving the system on trial credit, not for running it for anyone.</strong>"</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="workloads">
+    <div class="sec-head"><span class="sec-num">09</span><h2>Layer 6 — what actually runs inside</h2></div>
+    <p class="sec-sub">Namespace <code>pcdf</code> · 14 workloads · live at 2026-08-31</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Pod</th><th>Kind</th><th>Image</th><th>Node</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><code>postgres-0</code></td><td>StatefulSet</td><td><code>postgres:18.4-alpine</code></td><td>master</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>kafka-0</code></td><td>StatefulSet</td><td><code>apache/kafka:4.3.1</code></td><td>master</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>nfs-server-…</code></td><td>Deployment</td><td><code>itsthenetwork/nfs-server-alpine:12</code></td><td>worker-1</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>migrate-gdnsz</code></td><td>Job</td><td><code>pcdf-ingestion</code></td><td>worker-0</td><td><span class="pill neutral">Completed</span> (3 restarts)</td></tr>
+          <tr><td><code>watcher-…</code></td><td>Deployment</td><td><code>pcdf-watcher</code></td><td>worker-1</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>mapping-…</code></td><td>Deployment</td><td><code>pcdf-mapping</code></td><td>worker-0</td><td><span class="pill ok">Running</span> (2 restarts)</td></tr>
+          <tr><td><code>normalization-…</code></td><td>Deployment</td><td><code>pcdf-normalization</code></td><td>master</td><td><span class="pill ok">Running</span> (1 restart)</td></tr>
+          <tr><td><code>validation-…</code></td><td>Deployment</td><td><code>pcdf-validation</code></td><td>worker-1</td><td><span class="pill ok">Running</span> (3 restarts)</td></tr>
+          <tr><td><code>resolution-…</code></td><td>Deployment</td><td><code>pcdf-resolution</code></td><td>worker-0</td><td><span class="pill ok">Running</span> (3 restarts)</td></tr>
+          <tr><td><code>golden-…</code></td><td>Deployment</td><td><code>pcdf-golden</code></td><td>worker-0</td><td><span class="pill ok">Running</span> (1 restart)</td></tr>
+          <tr><td><code>review-console-…</code></td><td>Deployment</td><td><code>pcdf-review-console</code></td><td>worker-1</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>prometheus-…</code></td><td>Deployment</td><td><code>prom/prometheus:v3.13.2</code></td><td>master</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>alertmanager-…</code></td><td>Deployment</td><td><code>prom/alertmanager:v0.28.1</code></td><td>worker-1</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>grafana-…</code></td><td>Deployment</td><td><code>grafana/grafana:13.1.1</code></td><td>master</td><td><span class="pill ok">Running</span></td></tr>
+          <tr><td><code>postgres-backup</code></td><td>CronJob</td><td><code>postgres:18.4-alpine</code></td><td>—</td><td><span class="pill neutral">scheduled 02:00 UTC</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="box">
+      <p class="box-title">Reading the restart counts — this is normal, and worth knowing why</p>
+      <p>The five stage consumers restarted 1–3 times about 49 minutes before this snapshot, and the <code>migrate</code> Job restarted 3 times before completing. That is the documented cold-start behaviour, not a fault: <strong>everything is created in the same breath, and Postgres has a disk to attach and a database to <code>initdb</code> before it answers anything.</strong> Consumers crash-loop against a schema that does not exist yet, and recover on their own once the migration completes.</p>
+      <p style="margin-bottom:0">It is exactly why <code>13-migrate-job.yaml</code> sets <code>backoffLimit: 10</code> rather than the default 3 — see §16.</p>
+    </div>
+
+    <h3>Scheduling — what landed where, and why it is uneven</h3>
+    <p>master: 4 pods (postgres, kafka, prometheus, grafana). worker-0: 4. worker-1: 5. The two heaviest pods, Postgres and Kafka, both landed on the master — which is also the only 2-vCPU/4-GiB node. That is the scheduler doing its job: the trial overlay's requests (1 GiB for Kafka, 768 MiB for Postgres) do not fit alongside each other on a 2-GiB <code>B1ms</code>, so the master is the only node that can hold either.</p>
+    <p><strong>The consequence is worth naming:</strong> the control plane and the two most important stateful pods share one burstable 2-vCPU machine. On this shape, that node is a single point of failure for both Kubernetes and the data.</p>
+
+    <h3>Services — all ClusterIP, nothing exposed</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Service</th><th>Type</th><th>ClusterIP</th><th>Ports</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td><code>postgres</code></td><td>ClusterIP</td><td><code>None</code></td><td>5432</td><td><strong>Headless</strong> — StatefulSets need per-pod DNS</td></tr>
+          <tr><td><code>kafka</code></td><td>ClusterIP</td><td><code>None</code></td><td>9092</td><td><strong>Headless</strong> + <code>publishNotReadyAddresses</code> — see §16</td></tr>
+          <tr><td><code>nfs-server</code></td><td>ClusterIP</td><td><code>10.43.187.79</code></td><td>2049, 111, 20048</td><td><strong>Pinned</strong>, not auto-assigned — see §10</td></tr>
+          <tr><td><code>review-console</code></td><td>ClusterIP</td><td><code>10.43.217.21</code></td><td>8000</td><td>Also the Prometheus scrape target</td></tr>
+          <tr><td><code>prometheus</code></td><td>ClusterIP</td><td><code>10.43.137.54</code></td><td>9090</td><td>90-day retention</td></tr>
+          <tr><td><code>grafana</code></td><td>ClusterIP</td><td><code>10.43.145.191</code></td><td>3000</td><td>2 dashboards provisioned from files</td></tr>
+          <tr><td><code>alertmanager</code></td><td>ClusterIP</td><td><code>10.43.24.186</code></td><td>9093</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Not one <code>LoadBalancer</code>, not one <code>NodePort</code>, no Ingress applied.</strong> Nothing in this cluster is reachable from the internet except SSH and the Kubernetes API. Everything else is a port-forward away.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — reaching each UI</span>
+<pre><code>kubectl port-forward -n pcdf svc/review-console 8000:8000   <span class="c"># /admin/page</span>
+kubectl port-forward -n pcdf svc/grafana        3000:3000
+kubectl port-forward -n pcdf svc/prometheus     9090:9090
+kubectl port-forward -n pcdf svc/alertmanager   9093:9093
+
+<span class="c"># read the API keys the console wants</span>
+kubectl get secret pcdf-secrets -n pcdf -o jsonpath='{.data.pcdf_api_keys}' | base64 -d</code></pre>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="storage">
+    <div class="sec-head"><span class="sec-num">10</span><h2>Storage: three different kinds, and the one that was hard</h2></div>
+    <p class="sec-sub">This is the most interesting engineering in the whole deployment.</p>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>A container's filesystem vanishes when it restarts. A <strong>PersistentVolumeClaim (PVC)</strong> is a pod saying "I need N gigabytes that survive me." A <strong>StorageClass</strong> says how that gets provisioned. <strong>Access modes</strong> matter: <code>ReadWriteOnce</code> (RWO) = one node may mount it; <code>ReadWriteMany</code> (RWX) = many nodes may mount it at once. Block storage — a virtual disk — physically cannot do RWX. Only a network filesystem can.</p>
+    </div>
+
+    <h3>Kind 1 — <code>local-path</code>, the default class (6 volumes)</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>PVC</th><th>Size</th><th>Mode</th><th>Status</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>data-postgres-0</code></td><td>20Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td>The database</td></tr>
+          <tr><td><code>data-kafka-0</code></td><td>10Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td>Topic logs</td></tr>
+          <tr><td><code>prometheus-data</code></td><td>20Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td>90 days of metrics</td></tr>
+          <tr><td><code>grafana-data</code></td><td>2Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td><code>grafana.db</code> — users, prefs</td></tr>
+          <tr><td><code>alertmanager-data</code></td><td>1Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td>Silences, notification state</td></tr>
+          <tr><td><code>nfs-server-storage</code></td><td>10Gi</td><td>RWO</td><td><span class="pill ok">Bound</span></td><td>The bytes behind the shared volume</td></tr>
+          <tr><td><code>pcdf-backups</code></td><td>20Gi</td><td>RWO</td><td><span class="pill warn">Pending</span></td><td>Nightly dumps — see below</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><code>local-path</code> is k3s's built-in provisioner (<code>rancher.io/local-path</code>). It hands out a directory on the node's own OS disk. <strong>No Azure managed disks are attached for any of these</strong> — they all live inside the three <code>StandardSSD_LRS</code> OS disks you are already paying for. That is why the Azure resource list shows three disks, not ten.</p>
+
+    <div class="lens why">
+      <span class="lens-tag">What that trades away</span>
+      <p>Mobility. A <code>local-path</code> volume physically lives on one node, so its pod is pinned to that node forever. <strong>Lose a node and you lose that node's volumes.</strong> Right now that means: lose <code>pcdf-master</code> and you lose the database, the Kafka log, and all metrics history, along with the control plane.</p>
+      <p>The alternative — an Azure managed disk per claim — survives node loss but costs a data-disk slot and money per volume, and a <code>B1ms</code> supports only two data disks. On a trial-shaped cluster, <code>local-path</code> is the right call; on anything real it is not.</p>
+    </div>
+
+    <div class="box">
+      <p class="box-title">Why <code>pcdf-backups</code> is Pending, and why that is correct</p>
+      <p><code>local-path</code> uses <code>volumeBindingMode: WaitForFirstConsumer</code>: the volume is not provisioned until a pod actually mounts it. Nothing has mounted <code>pcdf-backups</code> yet, because the only thing that does is the <code>postgres-backup</code> CronJob, whose first run is 02:00 UTC.</p>
+      <p><strong>This is not a fault.</strong> It is deferred binding doing its job — the scheduler places the pod first, then the volume is created on whatever node that pod landed on, rather than provisioning a volume somewhere and constraining the scheduler afterwards.</p>
+      <p style="margin-bottom:0">It <em>would</em> be worth checking again after the first scheduled run: <code>kubectl get pvc pcdf-backups -n pcdf</code> should read <span class="pill ok">Bound</span> by 02:05 UTC.</p>
+    </div>
+
+    <h3>Kind 2 — <code>pcdf-data</code>, the one shared volume (the hard one)</h3>
+
+    <p>Two pods must write the same tree at the same time: the <strong>watcher</strong> sweeps <code>/data/inbox/watch</code>, and the <strong>console's upload form</strong> writes into <code>/data/inbox/uploads</code> — so a file dropped through the browser lands in the same tree as a file dropped on disk. They are currently on the same node, but nothing guarantees that, and nothing should have to.</p>
+
+    <p>That requires <code>ReadWriteMany</code>. On AKS this was <code>azurefile-csi</code> — Azure Files, a managed SMB share. Removing AKS removed that class. The replacement runs inside the cluster:</p>
+
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 700 210" role="img" aria-label="Diagram of how the shared pcdf-data volume works via an in-cluster NFS server.">
+          <rect x="14" y="20" width="150" height="52" rx="5" fill="var(--bg)" stroke="var(--line)"/>
+          <text x="89" y="41" font-size="10" text-anchor="middle" font-weight="600" fill="var(--ink)">watcher pod</text>
+          <text x="89" y="57" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">reads /data/inbox/watch</text>
+
+          <rect x="14" y="86" width="150" height="52" rx="5" fill="var(--bg)" stroke="var(--line)"/>
+          <text x="89" y="107" font-size="10" text-anchor="middle" font-weight="600" fill="var(--ink)">review-console pod</text>
+          <text x="89" y="123" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">writes /data/inbox/uploads</text>
+
+          <path d="M164 46 L 232 68" stroke="var(--ink-faint)" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <path d="M164 112 L 232 90" stroke="var(--ink-faint)" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <defs>
+            <marker id="ar" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 z" fill="var(--ink-faint)"/>
+            </marker>
+          </defs>
+
+          <rect x="236" y="52" width="164" height="56" rx="5" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <text x="318" y="72" font-size="10" text-anchor="middle" font-weight="600" fill="var(--ink)">PV pcdf-data-nfs</text>
+          <text x="318" y="87" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">RWX · nfs server 10.43.187.79</text>
+          <text x="318" y="99" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">path "/" (fsid=0 root)</text>
+
+          <path d="M400 80 L 452 80" stroke="var(--ink-faint)" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+
+          <rect x="456" y="40" width="164" height="80" rx="5" fill="var(--bg)" stroke="var(--line)"/>
+          <text x="538" y="60" font-size="10" text-anchor="middle" font-weight="600" fill="var(--ink)">nfs-server pod</text>
+          <text x="538" y="75" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">exports /exports</text>
+          <text x="538" y="88" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">privileged: true</text>
+          <text x="538" y="103" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">strategy: Recreate</text>
+
+          <path d="M538 120 L 538 152" stroke="var(--ink-faint)" stroke-width="1.2" fill="none" marker-end="url(#ar)"/>
+          <rect x="456" y="156" width="164" height="40" rx="5" fill="var(--bg-raised)" stroke="var(--line)" stroke-dasharray="3 3"/>
+          <text x="538" y="172" font-size="9" text-anchor="middle" fill="var(--ink)">PVC nfs-server-storage</text>
+          <text x="538" y="186" font-size="8.5" text-anchor="middle" fill="var(--ink-soft)">10Gi · RWO · local-path</text>
+
+          <text x="318" y="150" font-size="8.5" text-anchor="middle" fill="var(--ink-faint)">bound statically by name — no dynamic provisioning</text>
+          <text x="318" y="170" font-size="8.5" text-anchor="middle" fill="var(--ink-faint)">storageClassName: "" on both PV and PVC</text>
+        </svg>
+      </div>
+      <figcaption>RWX from RWO: one pod turns an ordinary single-node volume into a network filesystem many pods can share.</figcaption>
+    </figure>
+
+    <p>A single NFS server pod (<code>itsthenetwork/nfs-server-alpine:12</code>), backed by an ordinary <code>ReadWriteOnce</code> <code>local-path</code> volume, exporting it over NFS. A statically-bound <code>PersistentVolume</code> of type <code>nfs</code> points at it, and <code>pcdf-data</code> claims that PV by name.</p>
+
+    <div class="box">
+      <p class="box-title">Two non-obvious details, each of which cost real debugging time</p>
+      <h4 style="margin-top:0">1. The PV references the NFS server by IP, not by DNS name</h4>
+      <p><strong>kubelet mounts NFS volumes from the node's own network namespace</strong>, which has no cluster DNS resolver. A name like <code>nfs-server.pcdf.svc.cluster.local</code> resolves fine <em>inside</em> a pod and hangs forever when kubelet tries it on the host — the pod sits in <code>ContainerCreating</code> with no useful error.</p>
+      <p>So <code>09-nfs-server.yaml</code> <strong>pins</strong> the Service's <code>clusterIP: 10.43.187.79</code>, and <code>12-data-pvc.yaml</code> references that literal address. A pinned IP is what makes the reference stable across re-applies instead of drifting to whatever gets auto-assigned next. <em>If one ever changes, both must change together.</em></p>
+
+      <h4>2. The export path is <code>/</code>, not <code>/exports</code></h4>
+      <p>The image writes its export with <code>fsid=0</code>, which makes <code>/exports</code> the <strong>NFSv4 pseudo-filesystem root</strong> rather than a path beneath it. A client asking for <code>/exports</code> against an <code>fsid=0</code> export gets <code>ENOENT — No such file or directory</code>. The export is only reachable at <code>/</code>.</p>
+      <p style="margin-bottom:0">Both of these are the kind of thing that is obvious once known and invisible beforehand. Both are commented in the manifests where the next person will hit them.</p>
+    </div>
+
+    <div class="lens why">
+      <span class="lens-tag">Honest limitations of this NFS server</span>
+      <ul style="margin-bottom:0">
+        <li><strong>Single replica, <code>strategy: Recreate</code>.</strong> Not highly available — only shared. If it is evicted or its node dies, everything reading or writing <code>/data</code> stalls until it comes back. That is why the trial overlay gives it a resource request: to keep it out of BestEffort.</li>
+        <li><strong><code>privileged: true</code>.</strong> Kernel NFS export requires it. A privileged container is effectively root on its node — the largest single security concession in the cluster, made for one pod, knowingly.</li>
+        <li><strong>Its data sits on a <code>local-path</code> volume.</strong> So the shared volume inherits node-pinning after all: lose <code>pcdf-worker-1</code> and the shared tree is gone with it.</li>
+      </ul>
+    </div>
+
+    <p>The documented fallback if you would rather not run it at all: co-schedule the watcher and console with <code>podAffinity</code> and drop the claim to <code>ReadWriteOnce</code>. Works, at the price of pinning both to one node.</p>
+
+    <h3>Kind 3 — backups</h3>
+    <p><code>14-postgres-backup.yaml</code>: a CronJob at <code>0 2 * * *</code> (02:00 UTC) running <code>pg_dump</code> in custom format against the <code>postgres</code> Service, then — the important part — <strong><code>pg_restore --list</code> over the result before reporting success.</strong> Keeps 14. Runs the same <code>postgres:18.4-alpine</code> image as the database, so <code>pg_dump</code>'s version always matches the server's.</p>
+
+    <div class="lens why">
+      <span class="lens-tag">Why verify, and why the script is inlined</span>
+      <p><strong>A backup nobody has read back is not a backup.</strong> Counting <code>TABLE DATA</code> entries in the archive's table of contents is a cheap proof that the file is a real, readable dump and not a zero-byte artifact of a failed run.</p>
+      <p>The policy already existed as <code>tools/ops/backup.sh</code> and could not be reused verbatim: kustomize will not read files outside its root, and the Postgres image has no checkout of this repo. The two steps are inlined into the CronJob instead, and both files say so.</p>
+    </div>
+
+    <div class="box danger">
+      <p class="box-title">⚠ This is a backup, not disaster recovery</p>
+      <p>The dumps land on a PVC <strong>in the same cluster as the database they came from</strong>. Worse, on <code>local-path</code>, they land on a node's OS disk. A lost node takes the database <em>and</em> its backups.</p>
+      <p style="margin-bottom:0">Copy them off before calling it DR:</p>
+<pre style="background:var(--bg);border-color:var(--red)"><code>kubectl get pods -n pcdf -l job-name --field-selector=status.phase=Succeeded
+kubectl cp -n pcdf &lt;backup-pod&gt;:/backups/pcdf-&lt;stamp&gt;.dump ./restore-me.dump</code></pre>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="network">
+    <div class="sec-head"><span class="sec-num">11</span><h2>Networking, end to end</h2></div>
+    <p class="sec-sub">Four address spaces, and how a request crosses them.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Range</th><th>What lives there</th><th>Assigned by</th></tr></thead>
+        <tbody>
+          <tr><td><code>172.198.57–58.x</code></td><td>The three public IPs</td><td>Azure</td></tr>
+          <tr><td><code>10.0.0.0/16</code> → <code>10.0.1.0/24</code></td><td>VM private IPs (<code>.4</code>, <code>.5</code>, <code>.6</code>)</td><td>Azure VNet / subnet</td></tr>
+          <tr><td><code>10.42.0.0/16</code></td><td>Pod IPs — <code>10.42.0.x</code> master, <code>10.42.1.x</code> worker-1, <code>10.42.2.x</code> worker-0</td><td>flannel (k3s default CNI), /24 per node</td></tr>
+          <tr><td><code>10.43.0.0/16</code></td><td>Service ClusterIPs</td><td>k3s (virtual — no interface holds these)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="lens plain">
+      <span class="lens-tag">Plain</span>
+      <p>Pod-to-pod traffic across nodes is carried by <strong>flannel VXLAN</strong>: the packet is wrapped in a UDP datagram on port 8472 and sent between VM private IPs. That is what NSG rule 130 (<code>node-to-node</code>) is allowing. Azure sees ordinary UDP between two VMs on its subnet; Kubernetes sees a flat pod network.</p>
+      <p>A Service ClusterIP is not a real address on any interface. It is an iptables/IPVS rule on every node that rewrites the destination to one of the backing pod IPs. This is why <code>10.43.187.79</code> can be "pinned" — it is a number in a rule, not an allocated interface.</p>
+    </div>
+
+    <h3>Path 1 — you run <code>kubectl get pods</code></h3>
+    <ol>
+      <li>Your laptop reads <code>./kubeconfig</code> → <code>https://172.198.58.10:6443</code>.</li>
+      <li>Packet arrives at <code>pcdf-master-ip</code>; NSG rule 110 (<code>k3s-api</code>, source <code>0.0.0.0/0</code>) permits it.</li>
+      <li>Azure NATs it to <code>10.0.1.6:6443</code>, where the k3s API server listens.</li>
+      <li>TLS handshake — the server cert covers <code>172.198.58.10</code> because of <code>--tls-san</code>; your client cert authenticates you as <code>system:masters</code>.</li>
+      <li>The API server reads from its embedded datastore and answers.</li>
+    </ol>
+
+    <h3>Path 2 — you open the review console</h3>
+    <ol>
+      <li><code>kubectl port-forward -n pcdf svc/review-console 8000:8000</code>.</li>
+      <li>That opens a tunnel <em>through the API server</em> — same port 6443, same authentication. No new port is opened on any VM, and nothing new is exposed to the internet.</li>
+      <li>The API server proxies to the pod's <code>10.42.1.8:8000</code>.</li>
+      <li><code>localhost:8000/admin/page</code> in your browser is the console.</li>
+    </ol>
+    <p><strong>This is why nothing needs an Ingress to be usable.</strong> Port-forward gives operator access with zero additional attack surface — it inherits the API server's authentication rather than adding a second front door.</p>
+
+    <h3>Path 3 — the one that does not exist yet</h3>
+    <p>Public access to the console would be: install ingress-nginx → it takes ports 80/443 on the nodes (already open, NSG rule 120) → apply <code>31-review-console-ingress.yaml</code> → cert-manager with a <code>letsencrypt</code> ClusterIssuer provides TLS.</p>
+
+    <div class="box danger">
+      <p class="box-title">⚠ Read before ever applying that Ingress</p>
+      <p>The console serves <strong>personal data with full provenance</strong> — names, emails, phone numbers, raw quarantined rows, and which vendor sold them. Applying the Ingress puts that on a public IP.</p>
+      <p>It does fail closed: with no <code>pcdf_api_keys</code> configured the console answers loopback only, and through an Ingress every request arrives from somewhere else, so every request is refused with 503. <strong>But "fails closed" is a property to rely on when something goes wrong, not a reason to make exposure the default.</strong></p>
+      <p style="margin-bottom:0">Never set <code>PCDF_ALLOW_UNAUTHENTICATED</code> there. It exists for a console on a trusted network; on an Ingress it means no keys are checked at all. And never serve it over plain HTTP — the API key travels in a header.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="secrets">
+    <div class="sec-head"><span class="sec-num">12</span><h2>Secrets</h2></div>
+    <p class="sec-sub">One seam, three consumers, two things that will not rotate the easy way.</p>
+
+    <h3>The seam</h3>
+    <p>Every setting can arrive three ways — as <code>NAME</code>, as <code>NAME_FILE</code>, or as a file at <code>/run/secrets/&lt;name&gt;</code> — read without being asked, by <code>libs/common/src/common/config.py</code>. The Kubernetes Secret's keys are mounted at exactly that path, which is the same seam <code>docker-compose.secrets.yml</code> already uses.</p>
+    <p><strong>No application code changes between Compose and Kubernetes.</strong> That was the entire point of building the seam that way (ADR 0015).</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Secret</th><th>Key</th><th>Used by</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3"><code>pcdf-secrets</code></td><td><code>postgres_password</code></td><td>Postgres <code>initdb</code>, every consumer, the backup CronJob</td></tr>
+          <tr><td><code>grafana_admin_password</code></td><td>Grafana's own login</td></tr>
+          <tr><td><code>pcdf_api_keys</code></td><td>Console auth — comma-separated, two values so one rotates without a gap</td></tr>
+          <tr><td><code>ghcr-pull-secret</code></td><td><code>.dockerconfigjson</code></td><td>Every Deployment/Job/CronJob pulling a <code>pcdf-*</code> image</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="box danger">
+      <p class="box-title">⚠ The CRLF trap — a real incident, worth reading once</p>
+      <p><code>openssl rand</code> on Git Bash emits <strong>CRLF</strong>. A carriage return ended up inside the Postgres password.</p>
+      <p>Everything worked. Postgres initialised with the carriage return, the application read the same file and agreed completely. Only the <strong>backup CronJob</strong> failed — because it receives the value through an <em>environment variable</em>, which trims whitespace. It failed with <code>password authentication failed</code>: from the one component whose failure is silent until the day it matters.</p>
+      <p style="margin-bottom:0">The fix, now in the README's snippet:</p>
+<pre style="background:var(--bg);border-color:var(--red)"><code>rnd() { openssl rand "$@" | tr -d '\r'; }
+kubectl create secret generic pcdf-secrets -n pcdf \
+  --from-literal=postgres_password="$(rnd -base64 24)" \
+  --from-literal=grafana_admin_password="$(rnd -base64 24)" \
+  --from-literal=pcdf_api_keys="$(rnd -hex 32),$(rnd -hex 32)"</code></pre>
+    </div>
+
+    <h3>Rotating after first boot — two components store the value themselves</h3>
+
+    <h4>Postgres</h4>
+    <p>Reads <code>POSTGRES_PASSWORD_FILE</code> only during <code>initdb</code>, on the very first start with an empty volume. Afterwards the password lives <em>in the database</em>. Changing the Secret alone does nothing.</p>
+<pre><code>kubectl exec -n pcdf postgres-0 -- psql -U pcdf_dev -d pcdf \
+  -c "ALTER USER pcdf_dev PASSWORD 'the-new-value';"
+<span class="c"># then update the Secret to match, and restart everything that reads it</span>
+kubectl rollout restart deploy -n pcdf</code></pre>
+
+    <h4>Grafana</h4>
+    <p>Reads <code>GF_SECURITY_ADMIN_PASSWORD</code> only when it first creates <code>grafana.db</code>. Afterwards it lives on the PVC and a changed Secret is <strong>silently ignored</strong> — the symptom is "Invalid username or password" while holding what is demonstrably the right value.</p>
+<pre><code>GP=$(kubectl get pod -n pcdf -l app=grafana -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n pcdf "$GP" -- grafana cli --homepath /usr/share/grafana \
+  admin reset-admin-password 'the-new-value'</code></pre>
+    <p>The consumers, watcher and console have no such problem — they read the mounted file at startup, so a restart is all they need.</p>
+
+    <div class="lens why">
+      <span class="lens-tag">The <code>automountServiceAccountToken: false</code> line, on every pod</span>
+      <p>Two reasons that happen to point the same way. <strong>Mechanically:</strong> the secret volume mounts at <code>/run/secrets</code>, and <code>/var/run</code> is a symlink to <code>/run</code> — so Kubernetes' automatic token mount at <code>/var/run/secrets/kubernetes.io/serviceaccount</code> must create a directory inside a read-only mount. It cannot, and the container dies with <code>mkdirat ... read-only file system</code> before any application code runs. <strong>On its own terms:</strong> nothing here calls the Kubernetes API, so a token it never uses is a credential sitting in a container for no reason.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="sequence">
+    <div class="sec-head"><span class="sec-num">13</span><h2>The full deploy sequence</h2></div>
+    <p class="sec-sub">From an empty subscription to a working cluster. Every step, in order.</p>
+
+    <div class="box danger">
+      <p class="box-title">⚠ Steps 3 onward spend real money</p>
+      <p style="margin-bottom:0">Three VMs, three disks and three static public IPs start billing the moment <code>apply</code> finishes and keep billing until deallocated or destroyed. Always read the <code>plan</code> before the <code>apply</code>.</p>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <span class="step-title">Prerequisites</span>
+<pre><code>az login
+az account set --subscription 263ba326-248d-46c7-a28c-a46b1dee0960
+terraform version   <span class="c"># >= 1.5</span>
+kubectl version --client   <span class="c"># >= 1.27, for apply -k</span>
+
+<span class="c"># an SSH key pair, if you don't have one</span>
+ssh-keygen -t ed25519 -f ./pcdf-cluster-key</code></pre>
+      </li>
+
+      <li>
+        <span class="step-title">Bootstrap remote state — once per environment</span>
+<pre><code>terraform -chdir=deploy/azure/terraform/bootstrap init
+terraform -chdir=deploy/azure/terraform/bootstrap apply
+terraform -chdir=deploy/azure/terraform/bootstrap output backend_config_hint</code></pre>
+        <p>Note the outputs. You will not run this again.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Initialise the cluster module against that backend</span>
+<pre><code>terraform -chdir=deploy/azure/terraform init \
+  -backend-config="resource_group_name=pcdf-tfstate" \
+  -backend-config="storage_account_name=pcdftfstated1060b0f" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=pcdf-cluster.tfstate"</code></pre>
+      </li>
+
+      <li>
+        <span class="step-title">Plan, read it, then apply</span>
+<pre><code>terraform -chdir=deploy/azure/terraform plan \
+  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)" \
+  -var="admin_cidr=$(curl -s ifconfig.me)/32"
+
+terraform -chdir=deploy/azure/terraform apply \
+  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)" \
+  -var="admin_cidr=$(curl -s ifconfig.me)/32"</code></pre>
+        <p>Expect 17 objects. <strong>Do not skip <code>admin_cidr</code></strong> — see §05.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Get the kubeconfig, confirm three Ready nodes</span>
+<pre><code>terraform -chdir=deploy/azure/terraform output
+scp pcdf@&lt;master-ip&gt;:~/.kube/config ./kubeconfig
+export KUBECONFIG=$PWD/kubeconfig
+kubectl get nodes</code></pre>
+        <p>Cloud-init takes a minute or two after <code>apply</code> returns. Nodes appear as they finish.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Create the registry pull secret</span>
+<pre><code>kubectl apply -f infra/k8s/base/00-namespace.yaml
+kubectl create secret docker-registry ghcr-pull-secret -n pcdf \
+  --docker-server=ghcr.io \
+  --docker-username=&lt;github-username&gt; \
+  --docker-password=&lt;PAT with read:packages&gt;</code></pre>
+      </li>
+
+      <li>
+        <span class="step-title">Build and push the eight images</span>
+<pre><code>REGISTRY=ghcr.io/utkarshcruxhub sh infra/scripts/build-and-push.sh</code></pre>
+        <p>Then confirm <code>deploy/azure/kustomization.yaml</code>'s <code>images:</code> block points at that same prefix.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Create the application secrets — mind the CRLF</span>
+<pre><code>rnd() { openssl rand "$@" | tr -d '\r'; }
+kubectl create secret generic pcdf-secrets -n pcdf \
+  --from-literal=postgres_password="$(rnd -base64 24)" \
+  --from-literal=grafana_admin_password="$(rnd -base64 24)" \
+  --from-literal=pcdf_api_keys="$(rnd -hex 32),$(rnd -hex 32)"</code></pre>
+      </li>
+
+      <li>
+        <span class="step-title">Render first, then apply</span>
+<pre><code>kubectl kustomize deploy/azure-trial | less   <span class="c"># check before you apply</span>
+kubectl apply -k deploy/azure-trial</code></pre>
+        <p>Use <code>deploy/azure-trial</code> for this cluster's shape (resource requests). <code>deploy/azure</code> is the unconstrained variant for a larger cluster.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Wait for migrations, then watch it settle</span>
+<pre><code>kubectl wait -n pcdf --for=condition=complete job/migrate --timeout=300s
+kubectl get pods -n pcdf -w</code></pre>
+        <p>The consumers crash-loop against a schema that does not exist yet. Noisy, harmless, self-correcting — that is what the restart counts in §09 are.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Create a feed — the data volume starts empty</span>
+<pre><code>WP=$(kubectl get pod -n pcdf -l app=watcher -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n pcdf "$WP" -- mkdir -p /data/inbox/watch/my-feed
+kubectl exec -i -n pcdf "$WP" -- sh -c 'cat > /data/inbox/watch/my-feed/feed.json' \
+  &lt; data/inbox/watch/example/feed.json
+
+<span class="c"># kubectl cp mangles Windows paths; a pipe avoids it</span>
+cat some-vendor-export.csv \
+  | kubectl exec -i -n pcdf "$WP" -- sh -c 'cat > /data/inbox/watch/my-feed/export.csv'</code></pre>
+        <p>Until a feed directory exists the watcher logs <code>/data/inbox/watch does not exist</code> and sweeps nothing. Expected.</p>
+      </li>
+
+      <li>
+        <span class="step-title">Verify</span>
+<pre><code>kubectl get pods,pvc -n pcdf
+kubectl port-forward -n pcdf svc/review-console 8000:8000 &amp;
+curl -s localhost:8000/health/ready    <span class="c"># {"status":"ok","checks":{"postgres":"ok"}}</span>
+curl -s localhost:8000/metrics | grep pcdf_kafka_up   <span class="c"># pcdf_kafka_up 1</span></code></pre>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="inventory">
+    <div class="sec-head"><span class="sec-num">14</span><h2>Live inventory — 2026-08-31</h2></div>
+    <p class="sec-sub">Everything <code>az resource list</code> returns, annotated. <span class="pill warn">goes stale</span></p>
+
+    <h3><code>pcdf</code> — the cluster · <code>indiasouthcentral</code></h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td><code>pcdf-vnet</code></td><td>Virtual network</td><td><code>10.0.0.0/16</code>, one subnet <code>nodes</code> <code>10.0.1.0/24</code></td></tr>
+          <tr><td><code>pcdf-nodes-nsg</code></td><td>Network security group</td><td>4 rules — 22, 6443, 80/443, subnet-internal</td></tr>
+          <tr><td><code>pcdf-master</code></td><td>VM</td><td><code>Standard_B2s</code> · Ubuntu 22.04 · <code>10.0.1.6</code> / <code>172.198.58.10</code> · <span class="pill ok">running</span></td></tr>
+          <tr><td><code>pcdf-worker-0</code></td><td>VM</td><td><code>Standard_B1ms</code> · <code>10.0.1.5</code> / <code>172.198.57.183</code> · <span class="pill ok">running</span></td></tr>
+          <tr><td><code>pcdf-worker-1</code></td><td>VM</td><td><code>Standard_B1ms</code> · <code>10.0.1.4</code> / <code>172.198.58.36</code> · <span class="pill ok">running</span></td></tr>
+          <tr><td><code>pcdf-master-nic</code></td><td>NIC</td><td>subnet <code>nodes</code> + master public IP</td></tr>
+          <tr><td><code>pcdf-worker-0-nic</code></td><td>NIC</td><td>—</td></tr>
+          <tr><td><code>pcdf-worker-1-nic</code></td><td>NIC</td><td>—</td></tr>
+          <tr><td><code>pcdf-master-ip</code></td><td>Public IP</td><td>Standard, Static, <code>172.198.58.10</code></td></tr>
+          <tr><td><code>pcdf-worker-0-ip</code></td><td>Public IP</td><td>Standard, Static, <code>172.198.57.183</code></td></tr>
+          <tr><td><code>pcdf-worker-1-ip</code></td><td>Public IP</td><td>Standard, Static, <code>172.198.58.36</code></td></tr>
+          <tr><td><code>pcdf-master_OsDisk_1_b29303d8…</code></td><td>Managed disk</td><td><code>StandardSSD_LRS</code></td></tr>
+          <tr><td><code>pcdf-worker-0_OsDisk_1_d5f05c11…</code></td><td>Managed disk</td><td><code>StandardSSD_LRS</code></td></tr>
+          <tr><td><code>pcdf-worker-1_OsDisk_1_285ae9dd…</code></td><td>Managed disk</td><td><code>StandardSSD_LRS</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:0.9rem;color:var(--ink-soft)">The three disks are listed by Azure under a resource group spelled <code>PCDF</code> — the disk API case-folds it. Same group.</p>
+
+    <h3><code>pcdf-tfstate</code> — Terraform's own state · <code>southindia</code></h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td><code>pcdftfstated1060b0f</code></td><td>Storage account</td><td>StorageV2, Standard_LRS, HTTPS-only, blob versioning on. Container <code>tfstate</code>, blob <code>pcdf-cluster.tfstate</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Infrastructure-about-infrastructure. Nothing in <code>pcdf</code> depends on it at runtime — losing it costs the provisioning record, not the running cluster.</p>
+
+    <h3><code>NetworkWatcherRG</code> — not created by anyone</h3>
+    <p><code>NetworkWatcher_centralindia</code>, <code>NetworkWatcher_southindia</code>, <code>NetworkWatcher_indiasouthcentral</code>. Azure creates one per region automatically when a VNet first appears there. Harmless and free at this scale; leave alone.</p>
+
+    <h3>What is deliberately <em>not</em> here</h3>
+    <p>No AKS. No ACR. No managed Postgres. No Event Hubs. No managed Grafana. No Key Vault. No Load Balancer. No Application Gateway. Postgres, Kafka, Prometheus, Alertmanager, Grafana, NFS and all eight application services run as pods inside the cluster above — so <code>az resource list</code> will never show them, no matter how much the system grows.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — regenerate this section</span>
+<pre><code>az resource list -o table
+az vm list -g pcdf --show-details \
+  --query "[].{name:name,size:hardwareProfile.vmSize,state:powerState,priv:privateIps,pub:publicIps}" -o table
+az network nsg rule list -g pcdf --nsg-name pcdf-nodes-nsg -o table
+
+kubectl get nodes -o wide
+kubectl get pods,svc,pvc -n pcdf -o wide
+terraform -chdir=deploy/azure/terraform state list</code></pre>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="cost">
+    <div class="sec-head"><span class="sec-num">15</span><h2>Cost, and how to stop the bill</h2></div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Billed item</th><th>Count</th><th>Stops when deallocated?</th></tr></thead>
+        <tbody>
+          <tr><td>VM compute — <code>B2s</code> ×1, <code>B1ms</code> ×2</td><td>3</td><td><span class="pill ok">yes</span> — the big one</td></tr>
+          <tr><td>OS disks — <code>StandardSSD_LRS</code></td><td>3</td><td><span class="pill bad">no</span> — storage is billed while it exists</td></tr>
+          <tr><td>Public IPs — Standard, Static</td><td>3</td><td><span class="pill bad">no</span> — a reserved static IP bills whether attached or not</td></tr>
+          <tr><td>Storage account (state blob)</td><td>1</td><td><span class="pill bad">no</span> — but it is a few KB; effectively nothing</td></tr>
+          <tr><td>Bandwidth (egress)</td><td>—</td><td>usage-based; near zero for a port-forwarded console</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — pause between sessions, lose nothing</span>
+<pre><code>az vm deallocate --ids $(az vm list -g pcdf --query "[].id" -o tsv)
+
+<span class="c"># and back</span>
+az vm start --ids $(az vm list -g pcdf --query "[].id" -o tsv)</code></pre>
+    </div>
+
+    <div class="box">
+      <p class="box-title">Why deallocate is safe here, specifically</p>
+      <p><strong>Disks survive.</strong> Every Kubernetes volume is a directory on a node's OS disk (<code>local-path</code>), and those disks persist through deallocation. Postgres, Kafka logs, metrics history and the shared <code>/data</code> tree all come back.</p>
+      <p><strong>IPs survive</strong>, because they are Static. On restart the master answers on <code>172.198.58.10</code> again, so the kubeconfig and the API server's certificate SAN both still match. This is the payoff for choosing Static in §05.</p>
+      <p style="margin-bottom:0"><strong>Order matters on restart:</strong> start the master first and let k3s settle before the workers, or the agents spend their first minute retrying a server that is not up. They do recover on their own — it is just noise in the log.</p>
+    </div>
+
+    <p><code>az vm deallocate</code> (not <code>az vm stop</code>) is the one that stops compute billing. <code>stop</code> shuts the OS down but keeps the machine allocated, and you keep paying.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="broke">
+    <div class="sec-head"><span class="sec-num">16</span><h2>What broke, and why it broke</h2></div>
+    <p class="sec-sub">Six defects found by running it for real. None was findable by rendering YAML; none was Azure-specific. This is the most useful section in the document.</p>
+
+    <div class="lens why">
+      <span class="lens-tag">Why this is written down at all</span>
+      <p>Every one of these would have failed identically on GKE, EKS or a laptop cluster. They are the difference between "the manifests render" and "the system runs" — and each is fixed in the manifests with a comment at the exact place the next person will hit it.</p>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <span class="step-title">The secret mount blocked Kubernetes' own service-account token</span>
+        <p><strong>Symptom:</strong> every pod mounting a secret failed to start with <code>mkdirat ... read-only file system</code> — before any application code ran, so there was nothing in the logs to explain it.</p>
+        <p><strong>Cause:</strong> the secret volume mounts at <code>/run/secrets</code>. <code>/var/run</code> is a symlink to <code>/run</code>. Kubernetes mounts its token at <code>/var/run/secrets/kubernetes.io/serviceaccount</code> — which means creating a directory <em>inside a read-only secret mount</em>. It cannot.</p>
+        <p><strong>Fix:</strong> <code>automountServiceAccountToken: false</code> — which is also right on its own terms, since nothing here calls the Kubernetes API.</p>
+      </li>
+      <li>
+        <span class="step-title">Kafka refused to start on <code>lost+found</code></span>
+        <p><strong>Cause:</strong> a PersistentVolume arrives as a freshly formatted ext4 filesystem, and every ext4 filesystem has a <code>lost+found</code> at its root. Kafka requires its log directory to contain nothing but topic data.</p>
+        <p><strong>Fix:</strong> point <code>KAFKA_LOG_DIRS</code> at a <em>subdirectory</em> of the mount.</p>
+        <p><strong>Why Compose never hits it:</strong> a Docker volume is a directory on an existing filesystem, not a filesystem of its own — so there is no <code>lost+found</code>.</p>
+      </li>
+      <li>
+        <span class="step-title">Kafka could not resolve its own controller — twice</span>
+        <p><code>KAFKA_CONTROLLER_QUORUM_VOTERS</code> names the broker as <code>kafka-0.kafka</code>, a per-pod DNS name that <strong>only exists when the governing Service is headless</strong>. The Service was ClusterIP.</p>
+        <p>Making it headless exposed the second half: <strong>a headless Service publishes no DNS for pods that are not Ready</strong> — and the broker cannot become Ready until that name resolves. A deadlock.</p>
+        <p><strong>Fix:</strong> <code>publishNotReadyAddresses: true</code>.</p>
+      </li>
+      <li>
+        <span class="step-title">The shared data volume was unwritable</span>
+        <p>Images run as uid 10001; a PersistentVolume arrives owned by root. The watcher could not create the directory it exists to watch.</p>
+        <p><strong>Fix:</strong> <code>fsGroup: 10001</code> on the two pods that write <code>/data</code>.</p>
+        <p><strong>Why Compose never hits it:</strong> a bind mount inherits the ownership of a host directory the user already owns.</p>
+      </li>
+      <li>
+        <span class="step-title">The migrate Job gave up too early</span>
+        <p><code>backoffLimit: 3</code> expires about a minute in — which on a cold cluster is <em>while Postgres is still attaching its disk and running <code>initdb</code></em>. The Job went permanently <code>Failed</code> and had to be deleted and recreated by hand.</p>
+        <p><strong>Fix:</strong> raised to 10. Costs nothing when the schema is already there (first attempt succeeds) and covers a slow first boot. The live snapshot's <code>migrate</code> pod shows <strong>3 restarts before Completed</strong> — this fix earning its keep.</p>
+      </li>
+      <li>
+        <span class="step-title">The one that wasted the most time: a carriage return in a password</span>
+        <p>Operational rather than structural, and the most instructive. Covered in full in §12. The lesson generalises: <strong>a value that is read two different ways can be wrong in only one of them</strong>, and the component that notices is the one whose failure you see last.</p>
+      </li>
+    </ol>
+
+    <h3>Two more found on the k3s migration</h3>
+    <p>Both in §10, both about the NFS server: kubelet mounting NFS from a namespace with no cluster DNS (hence the pinned ClusterIP), and <code>fsid=0</code> making the export reachable only at <code>/</code>. Add the missing <code>nfs-common</code> package (§06) and that is three separate ways the same volume can fail to mount, each with an error message that does not name its cause.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="own">
+    <div class="sec-head"><span class="sec-num">17</span><h2>What you now own that AKS used to do</h2></div>
+    <p class="sec-sub">The real cost of ADR 0023, stated plainly rather than as a rounding error.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Responsibility</th><th>AKS did</th><th>Now</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Control-plane HA</strong></td><td>Managed, replicated, free</td><td>One k3s server = one point of failure for the API. k3s supports multi-server embedded-etcd HA; adding it is a separate change.</td><td><span class="pill bad">not done</span></td></tr>
+          <tr><td><strong>etcd backups</strong></td><td>Automatic</td><td>k3s snapshots to <code>/var/lib/rancher/k3s/server/db/snapshots</code> on the master by default — <strong>but nothing ships them off the VM.</strong></td><td><span class="pill bad">gap</span></td></tr>
+          <tr><td><strong>k3s upgrades</strong></td><td><code>az aks upgrade</code>, on a schedule</td><td>Re-run <code>curl -sfL https://get.k3s.io | sh -</code> manually, per node.</td><td><span class="pill warn">manual</span></td></tr>
+          <tr><td><strong>OS patching</strong></td><td>Azure patched node images</td><td>Plain Ubuntu VMs. <code>unattended-upgrades</code> is not configured by the module.</td><td><span class="pill bad">not configured</span></td></tr>
+          <tr><td><strong>Postgres failover</strong></td><td>(never had it — self-hosted from the start)</td><td>Single instance. Kubernetes buys a stable volume and name across reschedules; a standby needs streaming replication.</td><td><span class="pill bad">future work</span></td></tr>
+          <tr><td><strong>Registry auth</strong></td><td><code>--attach-acr</code>, no secret</td><td>A PAT in an <code>imagePullSecret</code>, with an expiry to remember.</td><td><span class="pill warn">manual</span></td></tr>
+          <tr><td><strong>Postgres backups</strong></td><td>(never had it)</td><td>Nightly verified <code>pg_dump</code> CronJob — <strong>landing in the same cluster</strong>.</td><td><span class="pill warn">partial</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="box">
+      <p class="box-title">The trade, in one sentence</p>
+      <p style="margin-bottom:0">It exchanges an operational guarantee for portability. Whether that is right depends entirely on whether the portability is ever used — and this project's premise (the data outlives the thing displaying it) is the argument that it will be. What matters for the defence is that the cost was <strong>named at the time</strong>, in the ADR, not discovered later.</p>
+    </div>
+
+    <h4>Not settled by anything run so far</h4>
+    <p>ADR 0021's verification was on a <em>single</em> AKS node. The three-node k3s cluster is newer. Still unproven: Postgres failover (does not exist), the ReadWriteMany path under genuine cross-node contention, and the backup CronJob running on its own 02:00 schedule rather than on demand.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="history">
+    <div class="sec-head"><span class="sec-num">18</span><h2>How it got here — three decisions</h2></div>
+    <p class="sec-sub">The Azure infrastructure has been rebuilt twice. Both rebuilds are recorded.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th></th><th>Era 1 — ADR 0021</th><th>Era 2 — ADR 0022</th><th>Era 3 — ADR 0023 (now)</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Kubernetes</strong></td><td>AKS, single node</td><td>AKS, 1 system + 2 user pools</td><td>k3s on 3 plain VMs</td></tr>
+          <tr><td><strong>Registry</strong></td><td>ACR (Basic)</td><td>ACR (Basic)</td><td>ghcr.io</td></tr>
+          <tr><td><strong>Provisioned by</strong></td><td><code>create-cluster.sh</code> (<code>az</code> commands)</td><td>Terraform + remote state</td><td>Terraform + remote state</td></tr>
+          <tr><td><strong>RWX storage</strong></td><td><code>azurefile-csi</code></td><td><code>azurefile-csi</code></td><td>NFS server pod</td></tr>
+          <tr><td><strong>Image pull</strong></td><td><code>--attach-acr</code></td><td><code>--attach-acr</code></td><td><code>imagePullSecret</code></td></tr>
+          <tr><td><strong>Azure-specific code</strong></td><td>overlay (2 things) + script</td><td>overlay (2 things) + Terraform</td><td><strong>Terraform only</strong> (VMs + network)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>0021 → 0022: from a script to a plan</h3>
+    <p><code>create-cluster.sh</code> was a good script — it checked quota and resource-provider registration before spending money, and it asked for confirmation. It was still <em>imperative</em>: run it twice with different defaults and there is no diff to review, only two clusters that happen to differ. The provisioning record lived in whatever the operator remembered to write down.</p>
+    <p>Terraform replaced it because <strong><code>terraform plan</code> shows what would change before it changes</strong>. The script's confirmation prompt only ever confirmed "create," never "here is the diff."</p>
+
+    <h3>0022 → 0023: closing the last gap</h3>
+    <p>Asked directly — <em>are we locked into Azure at all?</em> — the honest answer under 0022 was "only for the cluster and the registry, and here is exactly how much." That is a smaller answer than "not at all."</p>
+    <p>AKS and ACR sat exactly on ADR 0021's line: not above it (neither is a managed database or broker), but not nothing either. Both are Azure services with their own APIs, and a cluster provisioned through them is provisioned through Azure-specific code no matter how generic what runs inside it is.</p>
+    <p>Removing them left the VM — <strong>the one thing every cloud, and a rack in a closet, sells the same way.</strong></p>
+
+    <div class="box">
+      <p class="box-title">Note on ADR 0022's arithmetic</p>
+      <p style="margin-bottom:0">ADR 0022 and 0023 both describe a default shape of <code>Standard_D4as_v5</code> nodes needing 12 vCPUs. That is no longer true — <code>variables.tf</code> now defaults to <code>B2s</code> + 2×<code>B1ms</code> = 4 vCPU, and the region moved to <code>indiasouthcentral</code> to make it possible (§03). The ADRs record the decision as taken at the time and were not rewritten; <strong><code>variables.tf</code> is the current truth.</strong> See §19.</p>
+    </div>
+
+    <p>Related reading in this repo: <a href="cutting-the-aks-cord.html">docs/cutting-the-aks-cord.html</a> tells the 0023 migration as a two-person conversation, and <a href="pcdf-aks-runbook.html">docs/pcdf-aks-runbook.html</a> is the AKS-era runbook.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="gaps">
+    <div class="sec-head"><span class="sec-num">19</span><h2>Open items and documentation drift</h2></div>
+    <p class="sec-sub">Found while writing this. Listed so they are fixed deliberately rather than discovered by someone following a stale instruction.</p>
+
+    <h3>Ranked by what would hurt</h3>
+    <ol>
+      <li><strong>SSH and the k3s API are open to <code>0.0.0.0/0</code>.</strong> Verified live on <code>pcdf-nodes-nsg</code>. One <code>-var="admin_cidr=..."</code> on the next apply. §05.</li>
+      <li><strong>Nothing ships k3s etcd snapshots off the master.</strong> They exist on disk and die with the node. §17.</li>
+      <li><strong>Postgres backups land in the same cluster</strong>, on a node's OS disk. Backup, not DR. §10.</li>
+      <li><strong>Postgres and Kafka both sit on the master</strong> — the smallest node, and also the control plane. Losing it loses Kubernetes and the data together. §09.</li>
+      <li><strong>OS auto-patching is not configured</strong> on any node. §17.</li>
+    </ol>
+
+    <h3>Stale documentation</h3>
+
+    <details class="drift">
+      <summary>docs/guides/azure-inventory.md — snapshot from 2026-08-27, now wrong in four ways</summary>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Says</th><th>Actually</th></tr></thead>
+          <tbody>
+            <tr><td>Resource group <code>pcdf</code> in <code>southindia</code></td><td><code>indiasouthcentral</code></td></tr>
+            <tr><td><code>pcdf-master</code> is <code>Standard_D4as_v5</code> (4 vCPU / 16 GiB)</td><td><code>Standard_B2s</code> (2 vCPU / 4 GiB)</td></tr>
+            <tr><td>"Only the master exists right now"</td><td>All three VMs exist and are Ready</td></tr>
+            <tr><td>Master IP <code>20.41.228.215</code></td><td><code>172.198.58.10</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-bottom:0">The file says up front that it will go stale and gives the command to regenerate it, which is the right design for that document. It just needs re-running.</p>
+    </details>
+
+    <details class="drift">
+      <summary>infra/k8s/README.md — the "On trial credit" section predates ADR 0023</summary>
+      <ul style="margin-bottom:0">
+        <li>Says <code>pcdf-data</code> "goes back to ReadWriteOnce on <code>managed-csi</code>" in the trial overlay. It does not — the overlay's own header says the volume needs no change because the NFS server backs it regardless of node count.</li>
+        <li>Ends with <code>az aks stop --name pcdf-aks --resource-group pcdf</code>. There is no AKS cluster. The correct command is <code>az vm deallocate</code> (§15) — and the same file's "On Azure specifically" section, further up, already says so correctly.</li>
+        <li>Says the trial overlay is for "a single-node cluster." It is now the three-node shape.</li>
+      </ul>
+    </details>
+
+    <details class="drift">
+      <summary>ADR 0022 / 0023 — the D4as_v5 and 12-vCPU arithmetic</summary>
+      <p style="margin-bottom:0">Both describe a 12-vCPU default shape. <code>variables.tf</code> now defaults to 4. ADRs are historical records and arguably <em>should not</em> be rewritten — but a reader arriving at 0023 for the current shape will get the wrong number. A one-line "superseded by" note at the top of each consequences section would fix it without falsifying the record.</p>
+    </details>
+
+    <h3>Design couplings worth knowing about</h3>
+    <ul>
+      <li><strong>The NFS ClusterIP <code>10.43.187.79</code> is hardcoded in two files</strong> (<code>09-nfs-server.yaml</code> pins it, <code>12-data-pvc.yaml</code> references it). Both comment the dependency, but nothing enforces it — change one and the volume silently stops mounting.</li>
+      <li><strong><code>version = "latest"</code> on the VM image</strong> means two nodes built months apart are not identical. Deliberate (§05), but it makes "rebuild a node to match" impossible.</li>
+      <li><strong>Migrations are baked into the <code>pcdf-ingestion</code> image.</strong> Adding a migration on disk does nothing until that image is rebuilt and pushed — unlike Compose, which bind-mounts <code>./db</code> over the image's copy.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="teardown">
+    <div class="sec-head"><span class="sec-num">20</span><h2>Teardown</h2></div>
+
+    <div class="box danger">
+      <p class="box-title">⚠ Destructive and irreversible</p>
+      <p style="margin-bottom:0"><code>terraform destroy</code> deletes the three VMs <strong>and their OS disks</strong>. Every Kubernetes volume lives on those disks — the database, the Kafka log, 90 days of metrics, the shared <code>/data</code> tree. <strong>All of it is gone, with no undo.</strong> Take and copy out a backup first (§10), and confirm you have it, before running this.</p>
+    </div>
+
+    <p>If the intent is only to stop paying, deallocate instead (§15) — it stops compute billing and keeps every byte.</p>
+
+    <div class="lens run">
+      <span class="lens-tag">Run — in this order</span>
+<pre><code><span class="c"># 1. take a backup and copy it OFF the cluster first</span>
+kubectl create job -n pcdf --from=cronjob/postgres-backup backup-before-teardown
+kubectl wait -n pcdf --for=condition=complete job/backup-before-teardown --timeout=600s
+kubectl cp -n pcdf &lt;pod&gt;:/backups/&lt;file&gt;.dump ./restore-me.dump
+<span class="c"># verify it locally before continuing</span>
+pg_restore --list ./restore-me.dump | head
+
+<span class="c"># 2. review what will be destroyed</span>
+terraform -chdir=deploy/azure/terraform plan -destroy \
+  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)"
+
+<span class="c"># 3. destroy the cluster</span>
+terraform -chdir=deploy/azure/terraform destroy \
+  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)"
+
+<span class="c"># 4. ONLY if the state backend itself is no longer needed</span>
+terraform -chdir=deploy/azure/terraform/bootstrap destroy</code></pre>
+    </div>
+
+    <p>Step 4 is separate for a reason: destroying the state storage while any environment still uses it as a backend leaves that environment's Terraform unable to find its own state. Do it last, and only when nothing points at it.</p>
+    <p><code>NetworkWatcherRG</code> is not managed by Terraform and will remain. Azure recreates it anyway; leave it.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="card">
+    <div class="sec-head"><span class="sec-num">21</span><h2>Quick reference card</h2></div>
+
+    <div class="box">
+      <p class="box-title">Identity</p>
+      <dl class="kv">
+        <dt>Subscription</dt><dd><code>263ba326-248d-46c7-a28c-a46b1dee0960</code></dd>
+        <dt>Cluster RG</dt><dd><code>pcdf</code> · <code>indiasouthcentral</code></dd>
+        <dt>State RG</dt><dd><code>pcdf-tfstate</code> · <code>southindia</code> · <code>pcdftfstated1060b0f</code> / <code>tfstate</code> / <code>pcdf-cluster.tfstate</code></dd>
+        <dt>SSH</dt><dd><code>ssh pcdf@172.198.58.10</code></dd>
+        <dt>API</dt><dd><code>https://172.198.58.10:6443</code></dd>
+        <dt>Registry</dt><dd><code>ghcr.io/utkarshcruxhub</code></dd>
+        <dt>Namespace</dt><dd><code>pcdf</code></dd>
+      </dl>
+    </div>
+
+<pre><code><span class="c"># --- daily ---------------------------------------------------------</span>
+export KUBECONFIG=$PWD/deploy/azure/terraform/kubeconfig
+kubectl get pods -n pcdf
+kubectl logs -n pcdf deploy/watcher -f
+kubectl port-forward -n pcdf svc/review-console 8000:8000
+
+<span class="c"># --- money ---------------------------------------------------------</span>
+az vm deallocate --ids $(az vm list -g pcdf --query "[].id" -o tsv)
+az vm start      --ids $(az vm list -g pcdf --query "[].id" -o tsv)
+
+<span class="c"># --- change infrastructure -----------------------------------------</span>
+terraform -chdir=deploy/azure/terraform plan  -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)"
+terraform -chdir=deploy/azure/terraform apply -var="ssh_public_key=$(cat ./pcdf-cluster-key.pub)"
+
+<span class="c"># --- change the application ----------------------------------------</span>
+REGISTRY=ghcr.io/utkarshcruxhub sh infra/scripts/build-and-push.sh
+kubectl apply -k deploy/azure-trial
+kubectl rollout restart deploy -n pcdf
+
+<span class="c"># --- ops scripts (baked into the watcher image) --------------------</span>
+kubectl exec -n pcdf deploy/watcher -- \
+  uv run --frozen --no-sync python /app/tools/ops/reblock.py --entity-type company
+
+<span class="c"># --- when something is stuck ---------------------------------------</span>
+kubectl describe pod -n pcdf &lt;pod&gt;          <span class="c"># Events at the bottom say why</span>
+kubectl get events -n pcdf --sort-by=.lastTimestamp | tail -30
+ssh pcdf@172.198.58.10 'sudo journalctl -u k3s -n 100'</code></pre>
+
+    <div class="box">
+      <p class="box-title">Where the truth lives</p>
+      <dl class="kv">
+        <dt>Azure resources</dt><dd><code>deploy/azure/terraform/*.tf</code></dd>
+        <dt>k3s install</dt><dd><code>infra/k3s/install-{server,agent}.sh.tpl</code></dd>
+        <dt>Kubernetes manifests</dt><dd><code>infra/k8s/base/</code></dd>
+        <dt>Registry + sizing</dt><dd><code>deploy/azure/</code>, <code>deploy/azure-trial/</code></dd>
+        <dt>Why any of it</dt><dd><code>docs/decisions/0021</code>, <code>0022</code>, <code>0023</code></dd>
+        <dt>Operator detail</dt><dd><code>infra/k8s/README.md</code>, <code>deploy/azure/terraform/README.md</code></dd>
+      </dl>
+    </div>
+  </section>
+
+  <footer class="endnote">
+    <p>Generated 2026-08-31 from the repository at commit <code>021da8c</code> (branch <code>k3s-migration-and-serving-projection</code>), cross-checked against live <code>az</code> and <code>kubectl</code> output.</p>
+    <p>Structure is stable. Live values — IPs, pod names, node placement — are a snapshot; regenerate with the commands in §14. Terraform, the manifests and the ADRs are the source of truth. This document describes them; it does not replace them.</p>
+  </footer>
+
+  </main>
+</div>
+
+<script>
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+    var sections = links
+      .map(function (a) { return document.querySelector(a.getAttribute('href')); })
+      .filter(Boolean);
+    if (!sections.length) return;
+
+    function sync() {
+      var y = window.scrollY + 90;
+      var current = 0;
+      for (var i = 0; i < sections.length; i++) {
+        if (sections[i].offsetTop <= y) current = i;
+      }
+      links.forEach(function (a, i) { a.classList.toggle('active', i === current); });
+    }
+
+    var ticking = false;
+    window.addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(function () { sync(); ticking = false; });
+    }, { passive: true });
+    sync();
+  })();
+</script>
+
+</body>
+</html>

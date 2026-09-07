@@ -20,7 +20,7 @@ WHERE s.source_name = %s
 
 RECORD_CHILDREN = ("validation_result", "record_validation", "quarantine_event",
                    "quarantine_item", "match_candidate", "record_entity_link",
-                   "attribute_observation")
+                   "attribute_observation", "entity_relationship")
 
 
 def purge(conn, names: list[str]) -> None:
@@ -28,6 +28,16 @@ def purge(conn, names: list[str]) -> None:
     record can be linked to another's entity, so every link must go before any
     entity does."""
     with conn.cursor() as cur:
+        # Deleting from entity makes Postgres verify no entity_relationship
+        # row still references it, and entity_relationship's FK-supporting
+        # indexes are partial (WHERE valid_to IS NULL, for the queries the
+        # running system actually makes) so that check falls back to a full
+        # scan per row deleted. Production code never hits this: entities are
+        # merged (record_entity_link repointed, a tombstone left), never hard
+        # deleted -- this DELETE only exists here. Raising the timeout for
+        # this admin-only, off-hot-path script is simpler than adding
+        # production indexes to support a query nothing else runs.
+        cur.execute("SET LOCAL statement_timeout = 0")
         for name in names:
             for table in RECORD_CHILDREN:
                 cur.execute(

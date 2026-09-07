@@ -201,12 +201,17 @@ def cleanup(conn, source_names):
     does.
     """
     with conn.cursor() as cur:
+        # See the identical note in tools/ops/purge_source.py: deleting from
+        # entity forces a full scan of entity_relationship per row, because
+        # its FK-supporting indexes are partial and nothing in the running
+        # system ever hard-deletes an entity to need better ones.
+        cur.execute("SET LOCAL statement_timeout = 0")
         # Phase 1: everything hanging off a record. Not all of these carry a
         # batch_id, but they all point at a record.
         for name in source_names:
             for table in ("validation_result", "record_validation", "quarantine_event",
                           "quarantine_item", "match_candidate", "record_entity_link",
-                          "attribute_observation"):
+                          "attribute_observation", "entity_relationship"):
                 cur.execute(
                     f"""
                     DELETE FROM {table} t USING raw_record r, batch b, source s

@@ -1,0 +1,747 @@
+<title>The Golden Record Schema</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --paper:#faf7ef;
+    --paper-raised:#ffffff;
+    --ink:#26201a;
+    --ink-soft:#5c5346;
+    --ink-faint:#8a8070;
+    --line:#e4dcc8;
+    --line-strong:#d3c8ac;
+    --gold:#96700f;
+    --gold-ink:#5c4409;
+    --gold-soft:#f3e6c4;
+    --slate:#2f4c60;
+    --slate-soft:#e2ebee;
+    --rust:#93412a;
+    --rust-soft:#f1ddd2;
+    --mono-bg:#efe8d6;
+    --shadow: 0 1px 2px rgba(38,32,26,0.06), 0 6px 20px rgba(38,32,26,0.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#181410;
+      --paper-raised:#211c16;
+      --ink:#ece4d4;
+      --ink-soft:#b6ab94;
+      --ink-faint:#8a7f6a;
+      --line:#3a3226;
+      --line-strong:#4a4030;
+      --gold:#dcac47;
+      --gold-ink:#f0d493;
+      --gold-soft:#3a2d12;
+      --slate:#8fb2c7;
+      --slate-soft:#1c2b33;
+      --rust:#e08a6c;
+      --rust-soft:#3a2118;
+      --mono-bg:#2a2318;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#181410;
+    --paper-raised:#211c16;
+    --ink:#ece4d4;
+    --ink-soft:#b6ab94;
+    --ink-faint:#8a7f6a;
+    --line:#3a3226;
+    --line-strong:#4a4030;
+    --gold:#dcac47;
+    --gold-ink:#f0d493;
+    --gold-soft:#3a2d12;
+    --slate:#8fb2c7;
+    --slate-soft:#1c2b33;
+    --rust:#e08a6c;
+    --rust-soft:#3a2118;
+    --mono-bg:#2a2318;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
+    font-size:16px; line-height:1.6;
+  }
+  h1,h2,h3,h4{ font-family:'Fraunces', Georgia, serif; font-weight:600; color:var(--ink); text-wrap:balance; }
+  code, .mono{ font-family:'IBM Plex Mono', ui-monospace, monospace; }
+  a{ color:var(--slate); }
+  p{ max-width:66ch; }
+  .wide p{ max-width:none; }
+
+  /* ---------- shell ---------- */
+  .shell{ display:grid; grid-template-columns: 246px minmax(0,1fr); gap:0; max-width:1180px; margin:0 auto; }
+  .rail{
+    position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+    padding:28px 18px 28px 24px; border-right:1px solid var(--line);
+  }
+  .rail-brand{ display:flex; align-items:baseline; gap:.5em; margin-bottom:22px; }
+  .rail-brand .mark{ font-family:'Fraunces',serif; font-weight:700; font-size:1.1rem; color:var(--gold-ink); }
+  .rail-brand .sub{ font-size:.72rem; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.08em; }
+  .rail nav{ display:flex; flex-direction:column; gap:2px; }
+  .rail nav a{
+    text-decoration:none; color:var(--ink-soft); font-size:.86rem; padding:6px 10px; border-radius:6px;
+    display:flex; gap:8px; align-items:baseline;
+  }
+  .rail nav a:hover{ background:var(--paper-raised); color:var(--ink); }
+  .rail nav a .n{ font-family:'IBM Plex Mono',monospace; font-size:.72rem; color:var(--ink-faint); min-width:1.4em; }
+  .rail .grp-label{ font-size:.68rem; text-transform:uppercase; letter-spacing:.09em; color:var(--ink-faint); margin:16px 10px 4px; }
+
+  .main{ padding: 40px 48px 100px; min-width:0; }
+  .content{ max-width:760px; }
+
+  /* ---------- hero ---------- */
+  .hero-eyebrow{ font-size:.78rem; text-transform:uppercase; letter-spacing:.1em; color:var(--gold-ink); font-weight:600; margin:0 0 10px; }
+  h1.title{ font-size:2.5rem; line-height:1.08; margin:0 0 16px; }
+  .lede{ font-size:1.12rem; color:var(--ink-soft); max-width:62ch; }
+  .hero-meta{ display:flex; gap:20px; flex-wrap:wrap; margin-top:22px; padding-top:18px; border-top:1px solid var(--line); font-size:.86rem; color:var(--ink-faint); }
+  .hero-meta b{ color:var(--ink-soft); font-weight:600; }
+
+  /* ---------- sections ---------- */
+  section.stage{ margin-top:76px; scroll-margin-top:24px; padding-top:6px; }
+  .stage-head{ display:flex; align-items:flex-start; gap:16px; margin-bottom:14px; }
+  .stage-num{
+    font-family:'IBM Plex Mono',monospace; font-size:.82rem; font-weight:600;
+    color:var(--gold-ink); background:var(--gold-soft); border-radius:6px; padding:3px 8px; margin-top:.35em; white-space:nowrap;
+  }
+  .stage-head h2{ font-size:1.55rem; margin:0; }
+  .stage-why{ color:var(--ink-soft); }
+  .stage-why em{ font-style:normal; color:var(--ink); background:linear-gradient(transparent 60%, var(--gold-soft) 60%); }
+
+  hr.rule{ border:none; border-top:1px solid var(--line); margin:64px 0 0; }
+
+  /* ---------- table cards ---------- */
+  .tbl-card{
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:10px;
+    padding:18px 20px 16px; margin:18px 0; box-shadow:var(--shadow);
+  }
+  .tbl-card.is-view{ border-style:dashed; }
+  .tbl-head{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .tname{ font-size:1rem; font-weight:600; background:var(--mono-bg); padding:3px 9px; border-radius:6px; color:var(--ink); }
+  .tbl-badge{ font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; padding:2px 8px; border-radius:20px; font-weight:600; }
+  .tbl-badge.table{ background:var(--slate-soft); color:var(--slate); }
+  .tbl-badge.view{ background:var(--gold-soft); color:var(--gold-ink); }
+  .tbl-what{ margin:6px 0 12px; color:var(--ink-soft); max-width:none; }
+  table.cols{ width:100%; border-collapse:collapse; font-size:.88rem; }
+  table.cols td{ padding:6px 10px 6px 0; vertical-align:top; border-top:1px solid var(--line); }
+  table.cols tr:first-child td{ border-top:none; }
+  table.cols td.c{ font-family:'IBM Plex Mono',monospace; font-size:.8rem; color:var(--gold-ink); white-space:nowrap; width:1%; }
+  .tbl-note{ margin:12px 0 0; font-size:.86rem; color:var(--ink-faint); border-left:3px solid var(--line-strong); padding-left:12px; max-width:none; }
+
+  /* ---------- confidence cards ---------- */
+  .dial-grid{ display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin:22px 0; }
+  .dial{ background:var(--paper-raised); border:1px solid var(--line); border-radius:10px; padding:14px 12px; box-shadow:var(--shadow); }
+  .dial .letter{ font-family:'Fraunces',serif; font-weight:700; font-size:1.3rem; color:var(--gold-ink); }
+  .dial h4{ font-size:.86rem; margin:6px 0 4px; line-height:1.25; }
+  .dial p{ font-size:.78rem; color:var(--ink-soft); margin:0; max-width:none; }
+  @media (max-width:900px){ .dial-grid{ grid-template-columns:repeat(2,1fr);} }
+
+  /* ---------- figures ---------- */
+  figure.diagram{ margin:26px 0; padding:18px; background:var(--paper-raised); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); overflow-x:auto; }
+  figure.diagram svg{ max-width:100%; height:auto; display:block; margin:0 auto; }
+  figure.diagram figcaption{ font-size:.82rem; color:var(--ink-faint); margin-top:10px; text-align:center; max-width:none; }
+  svg text{ fill:currentColor; font-family:'Source Sans 3',sans-serif; }
+  svg .lbl-mono{ font-family:'IBM Plex Mono',monospace; }
+
+  .callout{ background:var(--slate-soft); border-radius:10px; padding:16px 18px; margin:20px 0; font-size:.92rem; color:var(--ink); }
+  .callout.warn{ background:var(--rust-soft); }
+  .callout b{ font-weight:600; }
+
+  .pill-row{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .pill{ font-family:'IBM Plex Mono',monospace; font-size:.78rem; background:var(--mono-bg); padding:4px 10px; border-radius:20px; }
+
+  dl.glossary{ margin:0; }
+  dl.glossary dt{ font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--gold-ink); margin-top:14px; }
+  dl.glossary dd{ margin:4px 0 0; color:var(--ink-soft); max-width:62ch; }
+
+  footer{ margin-top:80px; padding-top:20px; border-top:1px solid var(--line); font-size:.82rem; color:var(--ink-faint); }
+
+  /* ---------- responsive ---------- */
+  @media (max-width:900px){
+    .shell{ grid-template-columns:1fr; }
+    .rail{ position:static; height:auto; border-right:none; border-bottom:1px solid var(--line); }
+    .rail nav{ flex-direction:row; flex-wrap:wrap; }
+    .rail .grp-label{ display:none; }
+    .main{ padding:28px 20px 80px; }
+    h1.title{ font-size:1.9rem; }
+  }
+</style>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-brand"><span class="mark">PCDF</span><span class="sub">schema guide</span></div>
+    <nav>
+      <a href="#overview"><span class="n">·</span> Overview</a>
+      <a href="#dimensions"><span class="n">·</span> Five things that sound alike</a>
+      <div class="grp-label">The pipeline database</div>
+      <a href="#stage-1"><span class="n">01</span> Ingestion</a>
+      <a href="#stage-2"><span class="n">02</span> Schema mapping</a>
+      <a href="#stage-3"><span class="n">03</span> Normalization</a>
+      <a href="#stage-4"><span class="n">04</span> Validation</a>
+      <a href="#stage-5"><span class="n">05</span> Quarantine</a>
+      <a href="#stage-6"><span class="n">06</span> Entity resolution</a>
+      <a href="#stage-7"><span class="n">07</span> Golden record</a>
+      <a href="#stage-8"><span class="n">08</span> AI assistance</a>
+      <a href="#stage-9"><span class="n">09</span> Operations</a>
+      <div class="grp-label">Elsewhere</div>
+      <a href="#serving"><span class="n">·</span> The serving database</a>
+      <a href="#glossary"><span class="n">·</span> Glossary</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="content">
+
+      <section id="overview">
+        <p class="hero-eyebrow">A tour of the pgAdmin schema, in plain words</p>
+        <h1 class="title">The Golden Record Schema</h1>
+        <p class="lede">25 tables and 8 views sound like a lot until you notice they're one idea, repeated: <b>never overwrite what a source said, only add a judgement on top of it.</b> Every table below is either recording a fact, judging a fact, or deciding which fact wins.</p>
+
+        <div class="hero-meta">
+          <span><b>25</b> tables</span>
+          <span><b>8</b> views</span>
+          <span><b>2</b> databases — pipeline (this guide) &amp; serving (the app)</span>
+          <span><b>1</b> rule — nothing a vendor said is ever deleted</span>
+        </div>
+
+        <p style="margin-top:32px">Think of the pipeline database as a court case, not a spreadsheet. A vendor file is a <b>witness</b> giving testimony (an <code class="mono">observation</code>). Several witnesses can disagree. A judge — the <code class="mono">golden</code> stage — picks the value to trust, but the losing testimony stays in the transcript forever. That's the whole schema: tables that hold testimony, tables that judge it, and one table that records the verdict.</p>
+
+        <figure class="diagram" aria-label="diagram">
+          <svg viewBox="0 0 680 940" role="img" aria-label="One record's journey: a vendor file becomes a batch, then a raw_record, gets its columns mapped, becomes attribute observations, is validated (branching to quarantine if invalid), resolved to an entity (branching to a match candidate if unsure), turned into a golden_attribute, and finally projected into the serving database's leads and companies tables.">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+              </marker>
+            </defs>
+            <!-- spine -->
+            <g font-size="13">
+              <!-- box 0 -->
+              <rect x="60" y="14" width="380" height="50" rx="8" fill="none" stroke="currentColor" opacity="0.5"/>
+              <text x="250" y="34" text-anchor="middle">Vendor file dropped in</text>
+              <text x="250" y="50" text-anchor="middle" class="lbl-mono" font-size="11" opacity="0.65">data/inbox/watch/…</text>
+
+              <line x1="250" y1="64" x2="250" y2="96" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 1 source+batch -->
+              <rect x="60" y="98" width="380" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+              <text x="250" y="122" text-anchor="middle" class="lbl-mono" font-weight="600">source · batch</text>
+              <text x="250" y="140" text-anchor="middle" font-size="11" opacity="0.75">who sent it, and this one upload</text>
+
+              <line x1="250" y1="154" x2="250" y2="186" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 2 raw_record -->
+              <rect x="60" y="188" width="380" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+              <text x="250" y="212" text-anchor="middle" class="lbl-mono" font-weight="600">raw_record</text>
+              <text x="250" y="230" text-anchor="middle" font-size="11" opacity="0.75">one source row, byte-for-byte</text>
+
+              <line x1="250" y1="244" x2="250" y2="276" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 3 mapping -->
+              <rect x="60" y="278" width="380" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+              <text x="250" y="300" text-anchor="middle" class="lbl-mono" font-weight="600">source_schema · column_mapping</text>
+              <text x="250" y="320" text-anchor="middle" font-size="11" opacity="0.75">which canonical field is this column?</text>
+
+              <line x1="250" y1="334" x2="250" y2="366" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 4 observation -->
+              <rect x="60" y="368" width="380" height="56" rx="8" fill="var(--gold-soft)" stroke="var(--gold)"/>
+              <text x="250" y="390" text-anchor="middle" class="lbl-mono" font-weight="600">attribute_observation</text>
+              <text x="250" y="410" text-anchor="middle" font-size="11" opacity="0.75">one row per cell — the lossless layer</text>
+
+              <line x1="250" y1="424" x2="250" y2="456" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 5 validation, branch to quarantine -->
+              <rect x="60" y="458" width="380" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+              <text x="250" y="480" text-anchor="middle" class="lbl-mono" font-weight="600">validation_result · record_validation</text>
+              <text x="250" y="500" text-anchor="middle" font-size="11" opacity="0.75">is this value usable?</text>
+
+              <line x1="440" y1="486" x2="474" y2="486" stroke="var(--rust)" marker-end="url(#arr)"/>
+              <text x="457" y="478" text-anchor="middle" font-size="10" fill="var(--rust)">invalid</text>
+              <rect x="476" y="458" width="150" height="56" rx="8" fill="var(--rust-soft)" stroke="var(--rust)"/>
+              <text x="551" y="482" text-anchor="middle" class="lbl-mono" font-size="12" font-weight="600" fill="var(--rust)">quarantine_item</text>
+              <text x="551" y="500" text-anchor="middle" font-size="9.5" opacity="0.8">held, never deleted</text>
+
+              <line x1="250" y1="514" x2="250" y2="546" stroke="currentColor" marker-end="url(#arr)"/>
+              <text x="262" y="536" font-size="10" opacity="0.65">valid, or released by a human</text>
+
+              <!-- 6 resolution, branch to match_candidate -->
+              <rect x="60" y="548" width="380" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+              <text x="250" y="570" text-anchor="middle" class="lbl-mono" font-weight="600">record_entity_link · entity</text>
+              <text x="250" y="590" text-anchor="middle" font-size="11" opacity="0.75">whose fact is this — which person/company?</text>
+
+              <line x1="440" y1="576" x2="474" y2="576" stroke="var(--gold-ink)" marker-end="url(#arr)"/>
+              <text x="457" y="568" text-anchor="middle" font-size="10" fill="var(--gold-ink)">unsure</text>
+              <rect x="476" y="548" width="150" height="56" rx="8" fill="var(--gold-soft)" stroke="var(--gold)"/>
+              <text x="551" y="572" text-anchor="middle" class="lbl-mono" font-size="12" font-weight="600" fill="var(--gold-ink)">match_candidate</text>
+              <text x="551" y="590" text-anchor="middle" font-size="9.5" opacity="0.8">a human confirms</text>
+
+              <line x1="250" y1="604" x2="250" y2="636" stroke="currentColor" marker-end="url(#arr)"/>
+
+              <!-- 7 golden -->
+              <rect x="60" y="638" width="380" height="56" rx="8" fill="var(--gold-soft)" stroke="var(--gold)"/>
+              <text x="250" y="660" text-anchor="middle" class="lbl-mono" font-weight="600">golden_attribute</text>
+              <text x="250" y="678" text-anchor="middle" font-size="11" opacity="0.75">the trusted value, with full history</text>
+
+              <line x1="250" y1="694" x2="250" y2="726" stroke="currentColor" marker-end="url(#arr)"/>
+              <text x="262" y="716" font-size="10" opacity="0.65">nightly projection job</text>
+
+              <!-- 8 serving -->
+              <rect x="60" y="728" width="380" height="60" rx="8" fill="none" stroke="currentColor" stroke-dasharray="4 3" opacity="0.7"/>
+              <text x="250" y="752" text-anchor="middle" class="lbl-mono" font-weight="600">leads · companies</text>
+              <text x="250" y="770" text-anchor="middle" font-size="11" opacity="0.75">a fast, flat copy — a different database</text>
+            </g>
+          </svg>
+          <figcaption>One record's whole trip, top to bottom. The two side branches — quarantine and match candidates — are where a human gets asked something; everything else runs on its own.</figcaption>
+        </figure>
+
+        <p><b>Reading it in pgAdmin:</b> everything above lives under one schema, <code class="mono">public</code>, in the <code class="mono">pcdf</code> database. Solid boxes in the diagram are real tables; a few things you'll see in the tree — <code class="mono">golden_person</code>, <code class="mono">golden_company</code>, <code class="mono">person</code>, <code class="mono">company</code>, <code class="mono">resolvable_record</code> — are <b>views</b>: saved queries that look like tables but store nothing of their own. pgAdmin marks them with a different icon; this guide marks them with a dashed border and a "view" badge.</p>
+      </section>
+
+      <section id="dimensions">
+        <hr class="rule"/>
+        <div class="stage-head" style="margin-top:64px">
+          <h2>Five things that sound alike but aren't</h2>
+        </div>
+        <p class="stage-why">The single most confusing thing about this schema is that it stores <em>five different kinds of "how sure are we?"</em> — and every migration comment goes out of its way to say they must never be mixed up. Once you can tell these apart, every table below makes sense.</p>
+
+        <div class="dial-grid">
+          <div class="dial"><div class="letter">A</div><h4>Source reliability</h4><p><code class="mono">source.reliability</code> — how much do we trust this <b>vendor</b> in general?</p></div>
+          <div class="dial"><div class="letter">B</div><h4>Mapping confidence</h4><p><code class="mono">column_mapping</code> — how sure are we this <b>column</b> means "email"?</p></div>
+          <div class="dial"><div class="letter">C</div><h4>Validation outcome</h4><p><code class="mono">validation_result</code> — is this one <b>value</b> well-formed and usable?</p></div>
+          <div class="dial"><div class="letter">D</div><h4>Match confidence</h4><p><code class="mono">record_entity_link</code> — is this row the <b>same person</b> as that one?</p></div>
+          <div class="dial"><div class="letter">E</div><h4>Golden confidence</h4><p><code class="mono">golden_attribute</code> — how sure are we in the <b>chosen</b> value overall?</p></div>
+        </div>
+        <div class="callout">A perfectly-mapped column (B) from a trusted vendor (A) can still hold a broken email (C fails). A record can pass every validation rule and still be a weak match to the entity it landed on (D). None of the five can substitute for another — that's why each gets its own column, in its own table.</div>
+      </section>
+
+      <!-- ============ STAGE 1 ============ -->
+      <section id="stage-1" class="stage">
+        <div class="stage-head"><span class="stage-num">01</span><h2>Ingestion — what a source literally handed us</h2></div>
+        <p class="stage-why">Before any judgement happens, the file's contents have to exist in the database exactly as the vendor wrote them. These four tables never interpret anything.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">source</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>vendor or feed</b> — not per file. "Apollo," "c_suite," and "LeadsNemo" each get exactly one row here, no matter how many files they've sent.</p>
+          <table class="cols">
+            <tr><td class="c">source_type</td><td>csv, excel, or (later) ai_enrichment for the AI's own guesses.</td></tr>
+            <tr><td class="c">reliability</td><td>0–1, dimension A above. Set by a human, once, per vendor.</td></tr>
+            <tr><td class="c">describes</td><td>organisation or location — does a shared domain mean one company, or one street address? (Two Subway franchises share subway.com and are not the same business.)</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">batch</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>upload</b> — the file you actually dropped in the folder or ran through the CLI.</p>
+          <table class="cols">
+            <tr><td class="c">status</td><td>running, completed, failed.</td></tr>
+            <tr><td class="c">rows_read / rows_ingested / rows_skipped</td><td>the file's scoreboard.</td></tr>
+            <tr><td class="c">file_hash</td><td>fingerprint of the bytes — how a re-dropped file is recognized as "already loaded."</td></tr>
+            <tr><td class="c">columns</td><td>the column names, in the exact order the file had them (jsonb can't be trusted to keep order on its own).</td></tr>
+            <tr><td class="c">events_published_at</td><td>NULL means the rows are safely in Postgres but the "batch is ready" announcement never made it to Kafka — a visible gap instead of a silent one.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">raw_record</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>source row</b>, kept verbatim as JSON. This is the row your vendor sent — untouched, forever. Every other table in the database ultimately points back to a row here.</p>
+          <table class="cols">
+            <tr><td class="c">raw_payload</td><td>the entire row as jsonb — every column, unmapped ones included.</td></tr>
+            <tr><td class="c">source_record_id</td><td>a natural key if the file had one, otherwise just the row number.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">record_error</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Where a row goes when the pipeline <b>couldn't even process it</b> — a malformed cell, a crash, a bug. Not a judgement about the data (that's quarantine, stage 05); this is a confession that our own code choked.</p>
+          <table class="cols">
+            <tr><td class="c">raw_payload</td><td>stored here too, because the failure may have happened before raw_record was even written — this table can be the only proof the row ever arrived.</td></tr>
+            <tr><td class="c">stage</td><td>free text, not a fixed list — new stages get added, and a strict CHECK here could reject the very error it's meant to record.</td></tr>
+          </table>
+        </div>
+
+        <div class="callout"><b>Every table from here on repeats the same three columns:</b> <code class="mono">batch_id</code>, <code class="mono">source_id</code>, and usually <code class="mono">record_id</code>. They're the provenance trail — the answer to "which file, which vendor, which row" is always one join away, on every table in this schema. This guide won't repeat that for every card.</div>
+      </section>
+
+      <!-- ============ STAGE 2 ============ -->
+      <section id="stage-2" class="stage">
+        <div class="stage-head"><span class="stage-num">02</span><h2>Schema mapping — naming the columns</h2></div>
+        <p class="stage-why">A vendor's column is called "Work Email" or "email1" or "E-Mail Address." Something has to decide that all three mean the canonical field <code class="mono">email</code> — and remember that decision so a human never has to make it twice for the same layout.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">source_schema</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per distinct <b>column layout</b> a source has ever sent — not per batch. If Apollo sends the same 40 columns in the same order every week, that's one row here reused every time.</p>
+          <table class="cols">
+            <tr><td class="c">column_fingerprint</td><td>a hash of the ordered column list — "this exact layout," so a repeat is recognized instantly.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">column_mapping</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>source column</b>, saying which canonical field it is — or that nothing matched.</p>
+          <table class="cols">
+            <tr><td class="c">canonical_field</td><td>NULL is allowed and means "unmapped," not "ignored" — the raw column still gets captured in stage 03.</td></tr>
+            <tr><td class="c">mapping_method</td><td>exact_alias, similarity, value_analysis, ai_suggestion, manual, corroborated, or none — how the guess was made.</td></tr>
+            <tr><td class="c">mapping_confidence</td><td>dimension B from above.</td></tr>
+            <tr><td class="c">mapping_status</td><td>auto_accepted, needs_review, unmapped, approved, rejected — needs_review is what shows up in the review console.</td></tr>
+            <tr><td class="c">subject</td><td>self or employer — "Company City" on a person row describes the <i>employer</i>, not the person. Getting this wrong would make a person's golden address collide with their employer's.</td></tr>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 3 ============ -->
+      <section id="stage-3" class="stage">
+        <div class="stage-head"><span class="stage-num">03</span><h2>Normalization — the lossless layer</h2></div>
+        <p class="stage-why">This is the one table that matters most for the promise "nothing a source said is ever lost." Every single cell of every single row — mapped or not — becomes its own row here.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">attribute_observation</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>cell</b>. A 40-column file with 10,000 rows produces up to 400,000 rows here. This table is append-only — a later observation never overwrites an earlier one; deciding which one "wins" is the golden stage's job, not this table's.</p>
+          <table class="cols">
+            <tr><td class="c">raw_value / normalized_value</td><td>exactly what the source wrote, and the cleaned-up comparable form. normalized_value is NULL when the source wrote a placeholder like "N/A" — the raw text is kept, but downstream code won't mistake the placeholder for real data.</td></tr>
+            <tr><td class="c">value_index</td><td>one cell can contain several values (vendors really do use a <code class="mono">^^</code> delimiter) — each becomes its own observation instead of one squashed string.</td></tr>
+            <tr><td class="c">subject</td><td>self or employer, inherited from the column's mapping.</td></tr>
+          </table>
+          <p class="tbl-note">An unmapped column (FAX_NUMBER, SIC_DESCRIPTION, profile_pic…) still lands here with canonical_field = NULL. It's captured, just not yet promoted to a "real" field.</p>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 4 ============ -->
+      <section id="stage-4" class="stage">
+        <div class="stage-head"><span class="stage-num">04</span><h2>Validation — is this value usable?</h2></div>
+        <p class="stage-why">Validation never fixes anything and never deletes anything. It only attaches a judgement next to the untouched observation.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">validation_result</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>rule run against one value</b> (or against the whole record, for record-level rules). Passes are stored, not just failures — otherwise there'd be no way to tell "the rule passed" from "the rule never ran."</p>
+          <table class="cols">
+            <tr><td class="c">scope</td><td>attribute (one value) or record (the row as a whole).</td></tr>
+            <tr><td class="c">severity / outcome</td><td>error, warning, or info; pass or fail.</td></tr>
+            <tr><td class="c">ruleset_version</td><td>a judgement is only meaningful against the rules that made it — a new ruleset writes new rows rather than rewriting history.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">record_validation</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>record</b> — where it stands <i>right now</i>. If validation_result is the trial transcript, this is the verdict.</p>
+          <table class="cols">
+            <tr><td class="c">status</td><td>valid, warning, or invalid. Invalid means "not safe to resolve yet," never "delete this."</td></tr>
+            <tr><td class="c">validated_attributes / unvalidated_attributes</td><td>makes coverage countable — a record that's 90% unvalidated (mostly unmapped columns) is not the same as one that passed everything.</td></tr>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 5 ============ -->
+      <section id="stage-5" class="stage">
+        <div class="stage-head"><span class="stage-num">05</span><h2>Quarantine — held, never dropped</h2></div>
+        <p class="stage-why">An "invalid" record has to go somewhere that isn't the trash and isn't the entity graph. Quarantine is that somewhere, and it's written in the <i>same transaction</i> as the invalid verdict — no gap where a bad record is loose.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">quarantine_item</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One standing row per quarantined record — its <i>current</i> state.</p>
+          <table class="cols">
+            <tr><td class="c">reason_codes</td><td>which rules put it here, so a reopen can tell "same problem" from "new problem."</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">quarantine_event</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Append-only <b>history</b> of every disposition change — who did what, and when. quarantine_item is "now," this table is "the whole story."</p>
+        </div>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 640 220" role="img" aria-label="Quarantine state diagram: open leads to released, rejected, or resolved. Released or a reopened record can return to open.">
+            <defs><marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+            <circle cx="90" cy="110" r="46" fill="var(--rust-soft)" stroke="var(--rust)"/>
+            <text x="90" y="106" text-anchor="middle" class="lbl-mono" font-size="12" font-weight="600" fill="var(--rust)">open</text>
+            <text x="90" y="122" text-anchor="middle" font-size="9.5" opacity="0.75">awaits a human</text>
+
+            <line x1="134" y1="80" x2="270" y2="40" stroke="currentColor" marker-end="url(#arr2)"/>
+            <text x="200" y="52" text-anchor="middle" font-size="10">a human releases it</text>
+            <circle cx="320" cy="34" r="42" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="320" y="30" text-anchor="middle" class="lbl-mono" font-size="12" fill="var(--slate)">released</text>
+            <text x="320" y="45" text-anchor="middle" font-size="9">usable anyway</text>
+
+            <line x1="134" y1="110" x2="270" y2="110" stroke="currentColor" marker-end="url(#arr2)"/>
+            <text x="200" y="102" text-anchor="middle" font-size="10">a human rejects it</text>
+            <circle cx="320" cy="110" r="42" fill="none" stroke="currentColor" opacity="0.6"/>
+            <text x="320" y="106" text-anchor="middle" class="lbl-mono" font-size="12">rejected</text>
+            <text x="320" y="121" text-anchor="middle" font-size="9" opacity="0.75">final — outranks a later clean pass</text>
+
+            <line x1="134" y1="140" x2="270" y2="180" stroke="currentColor" marker-end="url(#arr2)"/>
+            <text x="200" y="172" text-anchor="middle" font-size="10">re-validation passes on its own</text>
+            <circle cx="320" cy="186" r="42" fill="var(--gold-soft)" stroke="var(--gold)"/>
+            <text x="320" y="182" text-anchor="middle" class="lbl-mono" font-size="12" fill="var(--gold-ink)">resolved</text>
+            <text x="320" y="197" text-anchor="middle" font-size="9">machine closed it, no human needed</text>
+
+            <path d="M 362 44 C 460 20, 520 70, 420 96" fill="none" stroke="currentColor" opacity="0.5" marker-end="url(#arr2)"/>
+            <text x="480" y="50" text-anchor="middle" font-size="9.5" opacity="0.7">reopened</text>
+          </svg>
+          <figcaption>quarantine_item.status. "Rejected" beats everything — even a ruleset fix can't quietly let a human-rejected record back in.</figcaption>
+        </figure>
+
+        <div class="tbl-card is-view">
+          <div class="tbl-head"><code class="tname">resolvable_record</code><span class="tbl-badge view">view</span></div>
+          <p class="tbl-what">Not a table — the actual gate. Entity resolution reads <i>this</i>, never raw_record directly. A record is resolvable if it's valid/warning and not rejected, or if a human explicitly released it.</p>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 6 ============ -->
+      <section id="stage-6" class="stage">
+        <div class="stage-head"><span class="stage-num">06</span><h2>Entity resolution — whose fact is this?</h2></div>
+        <p class="stage-why">Everything before this stored what sources <i>said</i>. Here, records become observations <i>of</i> something — a stable person or company that survives the vendor changing, the name changing, even records merging.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">entity</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">The real-world person or company. Deliberately holds <b>no attributes</b> — which name is "the" name is the golden stage's decision, not this table's. An entity is just an identity.</p>
+          <table class="cols">
+            <tr><td class="c">status / merged_into_entity_id</td><td>a merged entity is never deleted — it becomes a tombstone pointing at the survivor, so any id ever handed out still resolves.</td></tr>
+          </table>
+        </div>
+
+        <div class="pill-row">
+          <span class="pill">person = a view over entity WHERE entity_type='person'</span>
+          <span class="pill">company = a view over entity WHERE entity_type='company'</span>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">record_entity_link</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Which entity a source row is <i>about</i>. This is the join between "what was said" and "who it was said about."</p>
+          <table class="cols">
+            <tr><td class="c">role</td><td>self or employer — one person row can link to <i>two</i> entities: itself, and the company it names as employer.</td></tr>
+            <tr><td class="c">match_status</td><td>auto_linked, new_entity ("nothing matched, so start fresh" — recorded as deliberately as a match), or manual.</td></tr>
+            <tr><td class="c">match_confidence</td><td>dimension D.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">entity_identity_key</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">The values that make an entity <b>findable</b> — an email, a domain, a phone. Candidate matching reads only this table, so it never has to scan every entity in the database.</p>
+          <table class="cols">
+            <tr><td class="c">strength</td><td>strong keys can carry a match on their own; moderate ones never can alone — this is what stops two different people at the same company from merging on company name alone.</td></tr>
+          </table>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">match_candidate</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">A match that scored high enough to be worth a human's attention, but not high enough to act on automatically. The record still gets its own entity in the meantime — the pipeline never blocks waiting on a review.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">entity_merge</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Append-only proof of every merge — what got absorbed, into what, by whom, why. Merging is the one operation here that looks irreversible, so it gets the most permanent record.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">entity_relationship</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Relationships <i>between</i> entities. Today only one kind exists: <code class="mono">employed_at</code>.</p>
+        </div>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 640 210" role="img" aria-label="One person row splits into two subjects: self observations become the person entity, employer observations become a company entity, linked by an employed_at relationship.">
+            <defs><marker id="arr3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+            <rect x="20" y="76" width="150" height="56" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="95" y="100" text-anchor="middle" class="lbl-mono" font-size="12" font-weight="600">raw_record</text>
+            <text x="95" y="116" text-anchor="middle" font-size="9.5" opacity="0.75">one person row</text>
+
+            <line x1="170" y1="92" x2="270" y2="40" stroke="currentColor" marker-end="url(#arr3)"/>
+            <text x="215" y="52" text-anchor="middle" font-size="10" class="lbl-mono">subject='self'</text>
+            <rect x="272" y="14" width="180" height="50" rx="8" fill="var(--gold-soft)" stroke="var(--gold)"/>
+            <text x="362" y="34" text-anchor="middle" font-size="11" font-weight="600">observations about the person</text>
+            <text x="362" y="50" text-anchor="middle" font-size="9.5" opacity="0.8">name, own email, own city…</text>
+
+            <line x1="452" y1="39" x2="560" y2="39" stroke="currentColor" marker-end="url(#arr3)"/>
+            <text x="506" y="30" text-anchor="middle" font-size="9.5">role='self'</text>
+            <circle cx="595" cy="39" r="30" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="595" y="43" text-anchor="middle" font-size="10" class="lbl-mono">person</text>
+
+            <line x1="170" y1="112" x2="270" y2="164" stroke="currentColor" marker-end="url(#arr3)"/>
+            <text x="215" y="152" text-anchor="middle" font-size="10" class="lbl-mono">subject='employer'</text>
+            <rect x="272" y="150" width="180" height="50" rx="8" fill="var(--gold-soft)" stroke="var(--gold)"/>
+            <text x="362" y="170" text-anchor="middle" font-size="11" font-weight="600">observations about the employer</text>
+            <text x="362" y="186" text-anchor="middle" font-size="9.5" opacity="0.8">company name, company city…</text>
+
+            <line x1="452" y1="175" x2="560" y2="175" stroke="currentColor" marker-end="url(#arr3)"/>
+            <text x="506" y="166" text-anchor="middle" font-size="9.5">role='employer'</text>
+            <circle cx="595" cy="175" r="30" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="595" y="179" text-anchor="middle" font-size="10" class="lbl-mono">company</text>
+
+            <path d="M 595 69 C 640 105, 640 145, 595 145" fill="none" stroke="currentColor" opacity="0.6" marker-end="url(#arr3)"/>
+            <text x="655" y="110" font-size="9.5" transform="rotate(90 655 110)" opacity="0.75" class="lbl-mono">employed_at</text>
+          </svg>
+          <figcaption>One row, one raw_record — but two subjects. This is why "Company City" and "City" on the same row don't collide: they're tagged for different entities before they ever reach an observation.</figcaption>
+        </figure>
+
+        <div class="tbl-card is-view">
+          <div class="tbl-head"><code class="tname">entity_observation</code><span class="tbl-badge view">view</span></div>
+          <p class="tbl-what">The answer to "what do we know about this person, and who told us." Joins record_entity_link → attribute_observation → source → batch into one readable row.</p>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 7 ============ -->
+      <section id="stage-7" class="stage">
+        <div class="stage-head"><span class="stage-num">07</span><h2>Golden record — the trusted value</h2></div>
+        <p class="stage-why">This is the destination. Entities hold no attributes of their own (stage 06) — this is where "which of the three reported names is <i>the</i> name" finally gets decided, and where the decision is made auditable rather than just asserted.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">golden_attribute</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per <b>value a field has ever held</b> for one entity — current and historical together, in the same table, so the two can never drift apart. <code class="mono">valid_to IS NULL</code> means "this is the value right now."</p>
+          <table class="cols">
+            <tr><td class="c">strategy</td><td>which survivorship rule decided this — so a surprising value always traces back to a policy, never a mystery.</td></tr>
+            <tr><td class="c">confidence</td><td>dimension E — confidence in the <i>chosen</i> value, computed from (but distinct from) match confidence.</td></tr>
+            <tr><td class="c">supporting_sources / competing_values</td><td>two vendors agreeing is a different claim from one vendor speaking unopposed — and both differ from an actual conflict.</td></tr>
+            <tr><td class="c">evidence</td><td>every value that lost, and who said it. Losing an argument doesn't erase your testimony.</td></tr>
+          </table>
+          <p class="tbl-note">A unique index enforces exactly one <i>current</i> row per (entity, field) — everything else with a valid_to is history, not a duplicate.</p>
+        </div>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 640 190" role="img" aria-label="Three competing observations of a person's job title feed into a survivorship strategy, which produces the current golden value; an earlier golden value is superseded and kept as history.">
+            <defs><marker id="arr4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+            <g font-size="10.5">
+              <rect x="10" y="10" width="150" height="34" rx="6" fill="var(--paper)" stroke="currentColor" opacity="0.6"/>
+              <text x="85" y="31" text-anchor="middle">Apollo: "VP Sales"</text>
+              <rect x="10" y="54" width="150" height="34" rx="6" fill="var(--paper)" stroke="currentColor" opacity="0.6"/>
+              <text x="85" y="75" text-anchor="middle">c_suite: "VP Sales"</text>
+              <rect x="10" y="98" width="150" height="34" rx="6" fill="var(--paper)" stroke="currentColor" opacity="0.6"/>
+              <text x="85" y="119" text-anchor="middle">LeadsNemo: "Sales Lead"</text>
+            </g>
+            <line x1="160" y1="27" x2="240" y2="65" stroke="currentColor" opacity="0.6" marker-end="url(#arr4)"/>
+            <line x1="160" y1="71" x2="240" y2="70" stroke="currentColor" opacity="0.6" marker-end="url(#arr4)"/>
+            <line x1="160" y1="115" x2="240" y2="75" stroke="currentColor" opacity="0.6" marker-end="url(#arr4)"/>
+            <rect x="244" y="46" width="130" height="50" rx="8" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="309" y="66" text-anchor="middle" font-size="11" font-weight="600">strategy</text>
+            <text x="309" y="82" text-anchor="middle" font-size="9">2 of 3 agree → wins</text>
+            <line x1="374" y1="70" x2="430" y2="70" stroke="currentColor" marker-end="url(#arr4)"/>
+            <rect x="434" y="30" width="196" height="40" rx="6" fill="var(--paper)" stroke="var(--line-strong)" stroke-dasharray="3 3"/>
+            <text x="532" y="45" text-anchor="middle" font-size="10">job_title = "VP Sales"</text>
+            <text x="532" y="60" text-anchor="middle" font-size="9" opacity="0.75">valid_from Jan · valid_to Jun (superseded)</text>
+            <rect x="434" y="90" width="196" height="40" rx="6" fill="var(--gold-soft)" stroke="var(--gold)"/>
+            <text x="532" y="105" text-anchor="middle" font-size="10" fill="var(--gold-ink)" font-weight="600">job_title = "VP Sales"</text>
+            <text x="532" y="120" text-anchor="middle" font-size="9" fill="var(--gold-ink)">valid_from Jun · valid_to NULL — current</text>
+            <line x1="532" y1="70" x2="532" y2="88" stroke="currentColor" marker-end="url(#arr4)"/>
+            <text x="545" y="82" font-size="9" opacity="0.7">superseded_by</text>
+          </svg>
+          <figcaption>Two golden_attribute rows for the same field: an old one and its replacement, linked by superseded_by. Nothing was deleted — the timeline is the point.</figcaption>
+        </figure>
+
+        <div class="tbl-card is-view"><div class="tbl-head"><code class="tname">golden_record</code><span class="tbl-badge view">view</span></div><p class="tbl-what">golden_attribute filtered to just the current rows (valid_to IS NULL).</p></div>
+        <div class="tbl-card is-view"><div class="tbl-head"><code class="tname">golden_person</code><span class="tbl-badge view">view</span></div><p class="tbl-what">One flat row per person — name, email, job title, and the employer's name/website reached through the employed_at relationship (not the person's own attributes).</p></div>
+        <div class="tbl-card is-view"><div class="tbl-head"><code class="tname">golden_company</code><span class="tbl-badge view">view</span></div><p class="tbl-what">One flat row per company — identity, firmographics, and the commercial profile (technologies, funding, SIC description).</p></div>
+        <div class="tbl-card is-view"><div class="tbl-head"><code class="tname">golden_history</code><span class="tbl-badge view">view</span></div><p class="tbl-what">Every value a field has ever held, newest first — "what did we believe last month, and what changed it."</p></div>
+      </section>
+
+      <!-- ============ STAGE 8 ============ -->
+      <section id="stage-8" class="stage">
+        <div class="stage-head"><span class="stage-num">08</span><h2>AI assistance — propose, never assert</h2></div>
+        <p class="stage-why">The one hard rule governing this section: <b>a model's guess can never become a golden value without a human confirming it.</b> These two tables exist specifically to enforce that pause.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">enrichment_attempt</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per (entity, field) the model has ever been <i>asked about</i> — whatever the answer was. This is what makes running the job daily cheap: once asked, never asked again automatically.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">enrichment_proposal</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">A confident answer, sitting in its own review queue — <code class="mono">pending</code> until a human accepts or rejects it. Only on acceptance does it become a real observation, through the exact same path a vendor's file would use.</p>
+        </div>
+      </section>
+
+      <!-- ============ STAGE 9 ============ -->
+      <section id="stage-9" class="stage">
+        <div class="stage-head"><span class="stage-num">09</span><h2>Operations — the pipeline's nervous system</h2></div>
+        <p class="stage-why">None of these four tables describe a person or a company. They describe the <i>machinery</i> — is it running, should it keep running, and what did it just say.</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">service_heartbeat</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per long-running service, overwritten every sweep. Answers "is it alive right now" for a console that can't see inside eleven separate containers.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">pipeline_control</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Can a stage be paused? Yes — deliberately, per stage. If a vendor changes their export format and every record starts failing validation, this is what stops it at record 500 instead of quarantining ten million records overnight.</p>
+        </div>
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">pipeline_control_event</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">History of every pause/resume — who, why, and what the stage was seeing when it stopped itself.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">ingest_queue</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">Files waiting to be loaded, as a row instead of a thread in memory. Makes uploads survive a restart and stops ten simultaneous uploads from becoming ten interleaved ingests.</p>
+        </div>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">service_log</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">WARNING-and-above log lines from every service, readable in a browser instead of eleven separate <code class="mono">docker compose logs</code> calls. A convenience, never a dependency — container stdout stays the complete record.</p>
+        </div>
+      </section>
+
+      <!-- ============ SERVING ============ -->
+      <section id="serving" class="stage">
+        <hr class="rule"/>
+        <div class="stage-head" style="margin-top:64px"><h2>The serving database — a different building entirely</h2></div>
+        <p class="stage-why">Everything above answers "what do we know, and how sure are we." The application that customers actually browse needs a different question answered fast: "VPs of Engineering in Berlin at companies over 500 people, sorted by confidence" — one indexed scan, not a five-table join. So there are <b>two databases</b>, and a one-way road between them.</p>
+
+        <figure class="diagram">
+          <svg viewBox="0 0 560 130" role="img" aria-label="The pipeline database projects golden_attribute and entity_relationship into the serving database's leads and companies tables, one way only, on a nightly schedule.">
+            <defs><marker id="arr5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+            <rect x="20" y="20" width="220" height="90" rx="10" fill="var(--gold-soft)" stroke="var(--gold)"/>
+            <text x="130" y="44" text-anchor="middle" font-weight="600" font-size="13">pipeline database</text>
+            <text x="130" y="66" text-anchor="middle" class="lbl-mono" font-size="10.5">golden_attribute</text>
+            <text x="130" y="82" text-anchor="middle" class="lbl-mono" font-size="10.5">entity_relationship</text>
+
+            <line x1="244" y1="65" x2="316" y2="65" stroke="currentColor" marker-end="url(#arr5)"/>
+            <text x="280" y="55" text-anchor="middle" font-size="9.5">project (nightly)</text>
+            <text x="280" y="88" text-anchor="middle" font-size="9" opacity="0.7">one-way — nothing flows back</text>
+
+            <rect x="320" y="20" width="220" height="90" rx="10" fill="var(--slate-soft)" stroke="var(--slate)"/>
+            <text x="430" y="44" text-anchor="middle" font-weight="600" font-size="13">serving database</text>
+            <text x="430" y="66" text-anchor="middle" class="lbl-mono" font-size="10.5">companies</text>
+            <text x="430" y="82" text-anchor="middle" class="lbl-mono" font-size="10.5">leads</text>
+          </svg>
+          <figcaption>The pipeline writes; the application reads. An edit made in the app is overwritten by the next run — a derived copy is supposed to work that way.</figcaption>
+        </figure>
+
+        <p>This repository doesn't own the app's schema — <code class="mono">leads</code>, <code class="mono">companies</code>, <code class="mono">users</code>, <code class="mono">subscriptions</code> already existed. What this repo adds is a <b>contract</b> that makes the projection possible:</p>
+
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">companies.entity_id</code> / <code class="tname">leads.entity_id</code><span class="tbl-badge table">columns added</span></div>
+          <p class="tbl-what">A stable pointer back to the pipeline's entity_id, so re-running the projection <b>updates</b> a row instead of piling up near-duplicates. NULL means "this row predates the pipeline and isn't projected onto."</p>
+        </div>
+        <div class="tbl-card">
+          <div class="tbl-head"><code class="tname">projection_watermark</code><span class="tbl-badge table">table</span></div>
+          <p class="tbl-what">One row per entity type: how far the last run got. Lives in the <i>serving</i> database on purpose — restore serving from an old backup, and the watermark comes back with it, so the next run correctly re-projects whatever the backup was missing.</p>
+        </div>
+        <div class="tbl-card is-view">
+          <div class="tbl-head"><code class="tname">user_credit_balance</code><span class="tbl-badge view">view</span></div>
+          <p class="tbl-what">Compares the cached <code class="mono">users.credit_balance</code> column against the real ledger total in <code class="mono">user_credit_batches</code> — the two can drift, and this view is how you'd catch it.</p>
+        </div>
+
+        <div class="callout warn"><b>Array fields don't come from golden_attribute.</b> Things like <code class="mono">industry</code> or <code class="mono">technologies</code> are lists — a golden value is one value by definition, so a list column would be lying about what survivorship produced. Those are built straight from every distinct value any source ever reported.</div>
+      </section>
+
+      <!-- ============ GLOSSARY ============ -->
+      <section id="glossary" class="stage">
+        <hr class="rule"/>
+        <div class="stage-head" style="margin-top:64px"><h2>Glossary</h2></div>
+        <dl class="glossary">
+          <dt>entity</dt><dd>A real person or company, as a stable id — deliberately holding no data of its own.</dd>
+          <dt>observation</dt><dd>One fact, as one source stated it. The atomic, never-deleted unit of this database.</dd>
+          <dt>golden value / golden record</dt><dd>The one observation, per entity per field, currently trusted over its competitors.</dd>
+          <dt>survivorship</dt><dd>The rule that decides which competing observation becomes golden (recorded as <code class="mono">golden_attribute.strategy</code>).</dd>
+          <dt>provenance</dt><dd>The unbroken trail from a displayed value back to the exact source cell it came from — batch → source → raw_record → observation.</dd>
+          <dt>subject (self / employer)</dt><dd>Whose fact a column or observation describes, when one row names two entities (a person and their employer).</dd>
+          <dt>watermark</dt><dd>How far a background job (mainly the serving projection) got last time, so the next run only looks at what changed.</dd>
+          <dt>quarantine</dt><dd>Held back from entity resolution pending a human decision — still fully present in raw_record and attribute_observation.</dd>
+        </dl>
+      </section>
+
+      <footer>
+        Generated from the migrations in <code class="mono">db/migrations/</code> and <code class="mono">db/serving/</code> — if a table here looks wrong, the SQL comment above its <code class="mono">CREATE TABLE</code> is the source of truth.
+      </footer>
+    </div>
+  </main>
+</div>
